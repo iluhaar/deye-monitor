@@ -20,33 +20,36 @@ Do **not** assume that the upstream schema or every measurement point is availab
 
 ## 2. Recommended stack
 
-- TypeScript, Cloudflare Workers, Hono, Zod
+- TypeScript, Cloudflare Workers, **Effect v4** for application services, typed errors, dependency injection and retries; **Hono** for HTTP routing
+- Effect Schema for decoding/validation where practical; avoid duplicating runtime schemas in Zod unless an integration requires it
 - Cloudflare Cron Triggers for scheduled polling (initial cadence: one minute, subject to upstream rate limits)
 - Cloudflare D1 for durable snapshots, verified transitions, and polling metadata
 - Optional Cloudflare KV as a read cache **only if needed**; D1 is the initial source of truth to avoid KV eventual-consistency confusion
 - Wrangler for local development, configuration, migrations, and deployment
 - Vitest + Workers-compatible test harness for unit and integration tests
 
-Keep infrastructure small: no VPS, Docker, WebSockets, or message queue for the MVP.
+Keep infrastructure small: no VPS, Docker, WebSockets, or message queue for the MVP. Effect is **not** a replacement for Hono, D1, or Cloudflare Cron in this design. Verify exact Effect v4 package names/APIs against the installed version before implementation.
 
 ## 3. High-level architecture
 
 ```text
-             Deye Cloud OpenAPI
-                      |
-                 DeyeAdapter
-           (auth, retry, mapping)
-                      |
-             Ingestion / Poller
-                      |
-           Validation + Normalization
-                      |
-         Grid Status + Freshness Engine
-                      |
-              Cloudflare D1
-                      |
-             Hono REST API
+              Cloudflare Worker entrypoints
+                /                      \
+        Hono HTTP fetch            Cron scheduled
+                \                      /
+                 Effect application layer
+                    /            \
+           DeyeService         StorageService
+           (Effect Layer)       (D1 Layer)
+                 |                  |
+           Deye Cloud API      Cloudflare D1
+                 \                  /
+              PollingService + grid evaluation
 ```
+
+Hono owns request routing, authentication middleware, request/response mapping, and HTTP status codes. Effect v4 owns application workflows, dependency management, typed failures, timeout/retry policies, decoding, and testable service boundaries. The Cloudflare `fetch` and `scheduled` handlers each run **finite** Effect programs with request/execution-scoped environment bindings; do not start an infinite background Effect scheduler.
+
+Recommended services: `DeyeService` for upstream read-only access; `StorageService` for D1 persistence; `TelemetryService` for normalized readings; `PollingService` for the ingestion workflow. Keep grid detection and freshness evaluation as pure domain functions unless effects are truly required. Compose live implementations with Effect Layers and replace them with test layers in unit/integration tests.
 
 Key separation: upstream-specific payloads never leak directly into the public server API. The data-source interface should permit a future local telemetry provider without changing internal normalized domain models or HTTP contracts.
 
@@ -71,10 +74,10 @@ Write an evidence-based mapping table: upstream field, unit, timestamp, expected
 
 ### Adapter concerns
 
-- Typed request/response models (generated from Swagger where viable; validate runtime responses with Zod)
+- Typed request/response models (generated from Swagger where viable; decode and validate actual responses using Effect Schema)
 - Token caching and safe refresh, accounting for expiry
-- Timeouts, bounded retries with exponential backoff/jitter for transient failures
-- Explicit handling for upstream 401/403, rate limiting, timeouts, invalid payloads, and stale telemetry
+- Effect-managed timeouts, bounded retries with exponential backoff/jitter for transient failures; never retry permanent auth/schema errors
+- Explicit tagged error types for upstream 401/403, rate limiting, timeouts, invalid payloads, and stale telemetry, translated to safe HTTP/poll outcomes
 - Idempotent ingestion; normalize watts, percent, direction/sign conventions, and UTC timestamps
 - Read-only API access; do not add upstream control/write operations
 
@@ -112,7 +115,7 @@ Do not invent measurements where the upstream payload omits them; use `null`. Ke
 
 ## 6. Polling and transition logic
 
-Initial trigger: one centralized scheduled poll per minute, with actual cadence adjusted after checking Deye limits and measurement latency. Avoid issuing Deye requests for every incoming API read.
+Initial trigger: one centralized Cloudflare Cron poll per minute, with actual cadence adjusted after checking Deye limits and measurement latency. Cloudflare Cron initiates the job; Effect only orchestrates the bounded work within that invocation. Avoid issuing Deye requests for every incoming API read.
 
 Polling workflow:
 
@@ -177,14 +180,14 @@ Illustrative status response (values are examples only):
 - Deye App ID/Secret and refresh tokens are server-side secrets, never in repository, logs, error responses, or API output.
 - Protect telemetry endpoints using scoped API tokens or Cloudflare Access, depending on deployment needs.
 - Rate-limit requests, especially forced refresh. Implement CORS conservatively and never treat CORS as authentication.
-- Validate inputs and upstream payloads; apply response size limits and request timeouts.
+- Validate inputs and upstream payloads with Effect Schema; apply response size limits and request timeouts.
 - No device-control endpoints in MVP.
 - Health checks should not disclose secrets or internal identifiers.
 - Use structured logs and aggregate metrics for poll success, upstream latency, data age, auth failures, and transitions.
 
 ## 10. Proposed repository structure
 
-Keep the backend in a dedicated top-level `server/` directory **from the beginning**, rather than placing its application code and configuration at the repository root. All server-specific source code, dependencies, database migrations, tests, and deployment configuration belong under `server/`. The root remains available for shared repository tooling or future independent packages without moving the backend later.
+Keep the backend in a dedicated top-level `server/` directory **from the beginning**. All server-specific source code, dependencies, database migrations, tests, and deployment configuration belong under `server/`. Use Effect v4 services and Layers internally, and Hono only at the HTTP boundary.
 
 ```text
 deye-monitor/
@@ -193,22 +196,30 @@ deye-monitor/
 │   └── deye-field-validation.md       # produced after live verification
 ├── server/
 │   ├── src/
-│   │   ├── index.ts                   # Hono + scheduled handler
+│   │   ├── index.ts                   # Worker fetch + scheduled entrypoints
 │   │   ├── api/
+│   │   │   ├── app.ts                  # Hono router
 │   │   │   ├── routes/
 │   │   │   └── middleware/
 │   │   ├── domain/
 │   │   │   ├── telemetry.ts
-│   │   │   └── grid-status.ts
-│   │   ├── integrations/deye/
-│   │   │   ├── client.ts
-│   │   │   ├── auth.ts
-│   │   │   ├── schemas.ts
-│   │   │   └── mapper.ts
+│   │   │   └── grid-status.ts         # pure grid/freshness rules
 │   │   ├── services/
-│   │   │   ├── poll.ts
-│   │   │   └── transitions.ts
-│   │   └── storage/
+│   │   │   ├── DeyeService.ts         # Effect service contract
+│   │   │   ├── StorageService.ts
+│   │   │   ├── TelemetryService.ts
+│   │   │   └── PollingService.ts
+│   │   ├── integrations/deye/
+│   │   │   ├── DeyeClient.ts
+│   │   │   ├── DeyeLive.ts            # Effect Layer implementation
+│   │   │   ├── auth.ts
+│   │   │   └── schemas.ts
+│   │   ├── storage/
+│   │   │   └── D1Live.ts              # Effect Layer implementation
+│   │   ├── errors/
+│   │   │   └── DeyeErrors.ts          # tagged application errors
+│   │   └── runtime/
+│   │       └── layers.ts              # Worker binding -> live Layers
 │   ├── migrations/
 │   ├── test/
 │   ├── wrangler.jsonc
@@ -218,6 +229,8 @@ deye-monitor/
 │   └── workflows/                     # server checks and deployment
 └── README.md
 ```
+
+Each invocation builds/provides only the required Effect environment. Avoid unbounded background fibers or assumptions about global mutable token caches persisting between Worker invocations. Keep Deye tokens in memory only when safely scoped, or use a controlled persistent strategy if required.
 
 All backend development and deployment commands run from `server/` (or explicitly target that directory). The CI workflows should install, test, build, and deploy the server using `server/` as their working directory.
 
@@ -233,15 +246,15 @@ Structure is proposed, not scaffolding committed by this plan.
 - [ ] **Gate:** if no reliable grid signal exists, expose `unknown` and document the limitation instead of guessing.
 
 ### Phase 2 — Backend foundation
-- [ ] Initialize Cloudflare Worker + Hono + TypeScript + Zod.
-- [ ] Implement typed Deye read-only adapter, token handling, retries, and errors.
-- [ ] Define normalized models and deterministic grid/freshness evaluator.
-- [ ] Create D1 migrations and repositories.
-- [ ] Implement authenticated GET API endpoints and response validation.
-- [ ] **Gate:** integration tests confirm stable contracts without contacting production Deye.
+- [ ] Initialize Cloudflare Worker + Hono + TypeScript + Effect v4, using Effect Schema for validation.
+- [ ] Implement typed Deye read-only adapter as an Effect Layer, with token handling, bounded retries, timeouts, and tagged errors.
+- [ ] Define normalized models and deterministic pure grid/freshness evaluator; model external dependencies with Effect service contracts.
+- [ ] Create D1 migrations and an Effect-backed StorageService/D1Live implementation.
+- [ ] Implement authenticated Hono GET endpoints; execute finite Effect programs and map typed failures to HTTP responses.
+- [ ] **Gate:** integration tests use test Layers to confirm stable contracts and retry/error policies without contacting production Deye.
 
 ### Phase 3 — Scheduled ingestion and history
-- [ ] Add Cron trigger with documented cadence and quota guardrails.
+- [ ] Add Cloudflare Cron trigger that invokes a finite PollingService Effect, with documented cadence and quota guardrails.
 - [ ] Make polling idempotent and handle overlapping executions.
 - [ ] Save latest normalized snapshot and confirmed state transitions.
 - [ ] Track poll runs, data gaps, stale data, and upstream errors.
@@ -261,7 +274,7 @@ Structure is proposed, not scaffolding committed by this plan.
 2. How long is the upstream device-to-cloud reporting delay during outages and grid restoration? Measure rather than assume.
 3. What are the current Deye API quotas and any restrictions on one-minute polling?
 4. Does a connection outage prevent updated readings? Separate communication failure from utility-grid absence.
-5. Should a later iteration support local Modbus/RS485? Keep adapter boundary now, do not implement it in MVP.
+5. Should a later iteration support local Modbus/RS485? Keep the Effect service boundary now, do not implement it in MVP.
 6. Is D1 alone sufficient for current traffic? Prefer the simplest solution first.
 
 ## 13. Definition of done
