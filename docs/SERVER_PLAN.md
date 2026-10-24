@@ -22,7 +22,7 @@ Do **not** assume that the upstream schema or every measurement point is availab
 
 - TypeScript, Cloudflare Workers, **Effect v4** for application services, typed errors, dependency injection and retries; **Hono** for HTTP routing
 - Effect Schema for decoding/validation where practical; avoid duplicating runtime schemas in Zod unless an integration requires it
-- Cloudflare Cron Triggers for scheduled polling (initial cadence: one minute, subject to upstream rate limits)
+- Cloudflare Cron Triggers for scheduled polling **only in Phase 5** (lowest priority; cadence subject to upstream rate limits)
 - Cloudflare D1 for durable snapshots, verified transitions, and polling metadata
 - Optional Cloudflare KV as a read cache **only if needed**; D1 is the initial source of truth to avoid KV eventual-consistency confusion
 - Wrangler for local development, configuration, migrations, and deployment
@@ -113,22 +113,22 @@ interface TelemetrySnapshot {
 
 Do not invent measurements where the upstream payload omits them; use `null`. Keep the measured-at and fetched-at timestamps separate. Consider a configurable freshness threshold (start at three minutes for validation; tune based on actual Deye reporting cadence). If telemetry is older than this limit or lacks reliable grid evidence, effective grid status is `unknown`. Preserve the last verified state separately as historical context, not as the current answer.
 
-## 6. Polling and transition logic
+## 6. Refresh and transition logic
 
-Initial trigger: one centralized Cloudflare Cron poll per minute, with actual cadence adjusted after checking Deye limits and measurement latency. Cloudflare Cron initiates the job; Effect only orchestrates the bounded work within that invocation. Avoid issuing Deye requests for every incoming API read.
+**Phases 1–4 are request-driven; no Cron trigger is required.** Implement a protected, rate-limited refresh operation to retrieve and persist current upstream readings on demand, and make normal reads use stored data or an explicitly documented refresh policy. Design ingestion as a reusable finite Effect program, so Phase 5 can invoke that same operation from Cloudflare Cron without rewriting business logic. Avoid uncontrolled Deye requests for every HTTP API read.
 
 Polling workflow:
 
-1. Acquire a single-flight/idempotency guard keyed by station + polling window; ensure overlapping executions cannot duplicate events.
+1. Acquire a single-flight/idempotency guard keyed by station + refresh operation; ensure concurrent executions cannot duplicate events.
 2. Fetch latest telemetry from Deye; validate and normalize.
 3. Evaluate measurement freshness and grid presence based on verified fields.
-4. Persist latest snapshot and polling status.
+4. Persist latest snapshot and refresh status.
 5. Compare against the **last confirmed** grid state; write transition events only for validated online/offline changes with supporting timestamps.
 6. Record errors and data gaps without manufacturing outage/restoration events.
 
 If state temporarily becomes unknown, do not generate a false transition. If an eventual online/offline change is detected across a gap, preserve the observed transition time and avoid pretending to know the precise physical switching time.
 
-On-demand refresh is optional and must require stronger authorization, server-side throttling, and concurrency control. Even a fresh HTTP response from Deye may contain an older measurement; return that distinction explicitly.
+The on-demand refresh operation is the initial ingestion mechanism and must require stronger authorization, server-side throttling, and concurrency control. Even a fresh HTTP response from Deye may contain an older measurement; return that distinction explicitly.
 
 ## 7. Durable storage (D1)
 
@@ -253,20 +253,27 @@ Structure is proposed, not scaffolding committed by this plan.
 - [ ] Implement authenticated Hono GET endpoints; execute finite Effect programs and map typed failures to HTTP responses.
 - [ ] **Gate:** integration tests use test Layers to confirm stable contracts and retry/error policies without contacting production Deye.
 
-### Phase 3 — Scheduled ingestion and history
-- [ ] Add Cloudflare Cron trigger that invokes a finite PollingService Effect, with documented cadence and quota guardrails.
-- [ ] Make polling idempotent and handle overlapping executions.
-- [ ] Save latest normalized snapshot and confirmed state transitions.
-- [ ] Track poll runs, data gaps, stale data, and upstream errors.
-- [ ] **Gate:** replayed payloads and failure scenarios never create duplicate or false events.
+### Phase 3 — On-demand ingestion and history
+- [ ] Implement a protected manual refresh operation using a finite Effect workflow (no Cron).
+- [ ] Make concurrent refreshes idempotent and rate-limited.
+- [ ] Save latest normalized snapshots and confirmed grid transitions to D1.
+- [ ] Track refresh runs, upstream errors, and stale/data-gap conditions.
+- [ ] **Gate:** refreshing explicitly works without any scheduler; replayed payloads and failures never generate duplicate or false events.
 
 ### Phase 4 — Hardening and deployment
 - [ ] Configure secrets and production environment.
 - [ ] Add CI for lint, typecheck, unit tests, and migration verification.
 - [ ] Add logging/monitoring and bounded data retention.
 - [ ] Exercise outage, restoration, Deye unavailability, token expiry, and stale-reading scenarios.
-- [ ] Document local development, migration, deployment, rollback, and incident triage.
-- [ ] **Gate:** API explicitly reports unknown/stale during telemetry disruption and survives restart/retry.
+- [ ] Document local development, migrations, deployment, rollback, and incident triage.
+- [ ] **Gate:** the request-driven API is deployed, usable, and accurately reports unknown/stale when data is unavailable, without scheduled jobs.
+
+### Phase 5 — Scheduled polling (lowest priority)
+- [ ] Verify Deye API quotas and real measurement update frequency before choosing a cadence.
+- [ ] Add a Cloudflare Cron trigger that invokes the **existing** finite refresh/polling Effect workflow.
+- [ ] Guard overlapping scheduled invocations and avoid duplicate transition events.
+- [ ] Record scheduled poll runs, failures, and ingestion lag; adjust cadence and retry policy to quotas.
+- [ ] **Gate:** scheduled polling reuses Phase 3 ingestion without changes to HTTP contracts, domain logic, or persistent data models.
 
 ## 12. Open decisions / risks
 
@@ -279,4 +286,4 @@ Structure is proposed, not scaffolding committed by this plan.
 
 ## 13. Definition of done
 
-The server is deployed, reads Deye Cloud with secrets protected, exposes a versioned authenticated API, distinguishes **online / offline / unknown** correctly using device-validated evidence and measurement timestamps, handles stale or unavailable upstream data safely, and keeps an idempotent history of verified transitions. No client-side code or documentation is part of this project plan.
+For Phases 1–4, the server is deployed, reads Deye Cloud with secrets protected, exposes a versioned authenticated API, distinguishes **online / offline / unknown** correctly using device-validated evidence and measurement timestamps, handles stale or unavailable upstream data safely, and keeps an idempotent history of verified transitions. Scheduled polling is an optional Phase 5 enhancement, not a requirement for initial delivery. No client-side code or documentation is part of this project plan.
