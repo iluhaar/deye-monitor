@@ -184,33 +184,42 @@ Illustrative status response (values are examples only):
 
 ## 10. Proposed repository structure
 
+Keep the backend in a dedicated top-level `server/` directory **from the beginning**, rather than placing its application code and configuration at the repository root. All server-specific source code, dependencies, database migrations, tests, and deployment configuration belong under `server/`. The root remains available for shared repository tooling or future independent packages without moving the backend later.
+
 ```text
 deye-monitor/
 ├── docs/
 │   ├── SERVER_PLAN.md
 │   └── deye-field-validation.md       # produced after live verification
-├── src/
-│   ├── index.ts                       # Hono + scheduled handler
-│   ├── api/
-│   │   ├── routes/
-│   │   └── middleware/
-│   ├── domain/
-│   │   ├── telemetry.ts
-│   │   └── grid-status.ts
-│   ├── integrations/deye/
-│   │   ├── client.ts
-│   │   ├── auth.ts
-│   │   ├── schemas.ts
-│   │   └── mapper.ts
-│   ├── services/
-│   │   ├── poll.ts
-│   │   └── transitions.ts
-│   └── storage/
-├── migrations/
-├── test/
-├── wrangler.jsonc
-└── package.json
+├── server/
+│   ├── src/
+│   │   ├── index.ts                   # Hono + scheduled handler
+│   │   ├── api/
+│   │   │   ├── routes/
+│   │   │   └── middleware/
+│   │   ├── domain/
+│   │   │   ├── telemetry.ts
+│   │   │   └── grid-status.ts
+│   │   ├── integrations/deye/
+│   │   │   ├── client.ts
+│   │   │   ├── auth.ts
+│   │   │   ├── schemas.ts
+│   │   │   └── mapper.ts
+│   │   ├── services/
+│   │   │   ├── poll.ts
+│   │   │   └── transitions.ts
+│   │   └── storage/
+│   ├── migrations/
+│   ├── test/
+│   ├── wrangler.jsonc
+│   ├── tsconfig.json
+│   └── package.json
+├── .github/
+│   └── workflows/                     # server checks and deployment
+└── README.md
 ```
+
+All backend development and deployment commands run from `server/` (or explicitly target that directory). The CI workflows should install, test, build, and deploy the server using `server/` as their working directory.
 
 Structure is proposed, not scaffolding committed by this plan.
 
