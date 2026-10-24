@@ -1,5 +1,7 @@
 # Deye Monitor — Server Implementation Plan
 
+> **Implementation tracking:** [Linear epic ILL-69 — reliable read-only server MVP](https://linear.app/illiadotdev/issue/ILL-69/epic-deye-monitor-reliable-read-only-server-mvp) is the source of truth for implementation progress, ownership, and status. This plan is the design and acceptance reference, not a completion tracker.
+
 ## 1. Goal and scope
 
 Build a small, reliable, read-only backend that periodically collects telemetry from Deye Cloud, normalizes it, detects verified utility-grid state transitions, and exposes a stable, authenticated HTTP API.
@@ -238,42 +240,52 @@ Structure is proposed, not scaffolding committed by this plan.
 
 ## 11. Implementation phases and acceptance criteria
 
+> **Tracking:** Implementation progress and status belong in the [ILL-69 Linear epic](https://linear.app/illiadotdev/issue/ILL-69/epic-deye-monitor-reliable-read-only-server-mvp). The issue links below map work to Linear; the phase bullets and gates remain static design and acceptance requirements, not a progress report.
+
+### Linear issue mapping
+
+- **Phase 1 — Verify the upstream integration:** public research — [ILL-72](https://linear.app/illiadotdev/issue/ILL-72); discovery — [ILL-75](https://linear.app/illiadotdev/issue/ILL-75); grid validation — [ILL-71](https://linear.app/illiadotdev/issue/ILL-71); quotas — [ILL-74](https://linear.app/illiadotdev/issue/ILL-74).
+- **Phase 2 — Backend foundation:** foundation — [ILL-73](https://linear.app/illiadotdev/issue/ILL-73); adapter — [ILL-82](https://linear.app/illiadotdev/issue/ILL-82); normalization — [ILL-79](https://linear.app/illiadotdev/issue/ILL-79).
+- **Phase 3 — On-demand ingestion and history:** guard — [ILL-85](https://linear.app/illiadotdev/issue/ILL-85); workflow — [ILL-80](https://linear.app/illiadotdev/issue/ILL-80); refresh — [ILL-83](https://linear.app/illiadotdev/issue/ILL-83).
+- **Phase 4 — Hardening and deployment:** CI baseline — [ILL-70](https://linear.app/illiadotdev/issue/ILL-70); security/CI hardening — [ILL-81](https://linear.app/illiadotdev/issue/ILL-81); observability — [ILL-84](https://linear.app/illiadotdev/issue/ILL-84); scenarios — [ILL-76](https://linear.app/illiadotdev/issue/ILL-76); deployment — [ILL-77](https://linear.app/illiadotdev/issue/ILL-77).
+- **Phase 5 — Scheduled polling (lowest priority):** optional scheduled polling — [ILL-78](https://linear.app/illiadotdev/issue/ILL-78).
+
 ### Phase 1 — Verify the upstream integration
-- [ ] Confirm regional host, credentials, auth, station/device discovery, and quotas.
-- [ ] Retrieve actual latest station/device readings and measurement point definitions.
-- [ ] Identify and validate an authoritative grid-presence signal against known online/offline states.
-- [ ] Document field meanings and sanitized fixtures.
-- [ ] **Gate:** if no reliable grid signal exists, expose `unknown` and document the limitation instead of guessing.
+- Confirm regional host, credentials, auth, station/device discovery, and quotas.
+- Retrieve actual latest station/device readings and measurement point definitions.
+- Identify and validate an authoritative grid-presence signal against known online/offline states.
+- Document field meanings and sanitized fixtures.
+- **Gate:** if no reliable grid signal exists, expose `unknown` and document the limitation instead of guessing.
 
 ### Phase 2 — Backend foundation
-- [ ] Initialize Cloudflare Worker + Hono + TypeScript + Effect v4, using Effect Schema for validation.
-- [ ] Implement typed Deye read-only adapter as an Effect Layer, with token handling, bounded retries, timeouts, and tagged errors.
-- [ ] Define normalized models and deterministic pure grid/freshness evaluator; model external dependencies with Effect service contracts.
-- [ ] Create D1 migrations and an Effect-backed StorageService/D1Live implementation.
-- [ ] Implement authenticated Hono GET endpoints; execute finite Effect programs and map typed failures to HTTP responses.
-- [ ] **Gate:** integration tests use test Layers to confirm stable contracts and retry/error policies without contacting production Deye.
+- Initialize Cloudflare Worker + Hono + TypeScript + Effect v4, using Effect Schema for validation.
+- Implement typed Deye read-only adapter as an Effect Layer, with token handling, bounded retries, timeouts, and tagged errors.
+- Define normalized models and deterministic pure grid/freshness evaluator; model external dependencies with Effect service contracts.
+- Create D1 migrations and an Effect-backed StorageService/D1Live implementation.
+- Implement authenticated Hono GET endpoints; execute finite Effect programs and map typed failures to HTTP responses.
+- **Gate:** integration tests use test Layers to confirm stable contracts and retry/error policies without contacting production Deye.
 
 ### Phase 3 — On-demand ingestion and history
-- [ ] Implement a protected manual refresh operation using a finite Effect workflow (no Cron).
-- [ ] Make concurrent refreshes idempotent and rate-limited.
-- [ ] Save latest normalized snapshots and confirmed grid transitions to D1.
-- [ ] Track refresh runs, upstream errors, and stale/data-gap conditions.
-- [ ] **Gate:** refreshing explicitly works without any scheduler; replayed payloads and failures never generate duplicate or false events.
+- Implement a protected manual refresh operation using a finite Effect workflow (no Cron).
+- Make concurrent refreshes idempotent and rate-limited.
+- Save latest normalized snapshots and confirmed grid transitions to D1.
+- Track refresh runs, upstream errors, and stale/data-gap conditions.
+- **Gate:** refreshing explicitly works without any scheduler; replayed payloads and failures never generate duplicate or false events.
 
 ### Phase 4 — Hardening and deployment
-- [ ] Configure secrets and production environment.
-- [ ] Add CI for lint, typecheck, unit tests, and migration verification.
-- [ ] Add logging/monitoring and bounded data retention.
-- [ ] Exercise outage, restoration, Deye unavailability, token expiry, and stale-reading scenarios.
-- [ ] Document local development, migrations, deployment, rollback, and incident triage.
-- [ ] **Gate:** the request-driven API is deployed, usable, and accurately reports unknown/stale when data is unavailable, without scheduled jobs.
+- Configure secrets and production environment.
+- Add CI for lint, typecheck, unit tests, and migration verification.
+- Add logging/monitoring and bounded data retention.
+- Exercise outage, restoration, Deye unavailability, token expiry, and stale-reading scenarios.
+- Document local development, migrations, deployment, rollback, and incident triage.
+- **Gate:** the request-driven API is deployed, usable, and accurately reports unknown/stale when data is unavailable, without scheduled jobs.
 
 ### Phase 5 — Scheduled polling (lowest priority)
-- [ ] Verify Deye API quotas and real measurement update frequency before choosing a cadence.
-- [ ] Add a Cloudflare Cron trigger that invokes the **existing** finite refresh/polling Effect workflow.
-- [ ] Guard overlapping scheduled invocations and avoid duplicate transition events.
-- [ ] Record scheduled poll runs, failures, and ingestion lag; adjust cadence and retry policy to quotas.
-- [ ] **Gate:** scheduled polling reuses Phase 3 ingestion without changes to HTTP contracts, domain logic, or persistent data models.
+- Verify Deye API quotas and real measurement update frequency before choosing a cadence.
+- Add a Cloudflare Cron trigger that invokes the **existing** finite refresh/polling Effect workflow.
+- Guard overlapping scheduled invocations and avoid duplicate transition events.
+- Record scheduled poll runs, failures, and ingestion lag; adjust cadence and retry policy to quotas.
+- **Gate:** scheduled polling reuses Phase 3 ingestion without changes to HTTP contracts, domain logic, or persistent data models.
 
 ## 12. Open decisions / risks
 

@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "deye-monitor-server",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-01-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "deye-monitor-local",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "vars": {
+    "FRESHNESS_THRESHOLD_SECONDS": "180"
+  }
+}

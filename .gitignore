@@ -1,0 +1,18 @@
+# Dependencies and local build state
+server/node_modules/
+server/.wrangler/
+server/dist/
+
+# Local-only Wrangler secrets and environment files
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+.env
+.env.*
+!.env.example
+
+# Tool and editor noise
+.DS_Store
+*.log
+.idea/
+.vscode/
