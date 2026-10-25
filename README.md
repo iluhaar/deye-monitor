@@ -32,8 +32,25 @@ npm run build
 ```
 
 Linting uses Oxlint with correctness rules and TypeScript/Vitest plugins;
-warnings fail the lint check. All checks above can run locally without GitHub
-Actions.
+warnings fail the lint check. `npm test` also applies the configured D1
+migrations in the Workers-runtime test database.
+
+## Local signoff
+
+After the checks pass and the tested commit has been pushed, install the
+[gh-signoff](https://github.com/basecamp/gh-signoff) GitHub CLI extension once
+and post a status for `HEAD` from the repository root:
+
+```sh
+gh extension install basecamp/gh-signoff
+gh signoff
+```
+
+`gh signoff` records a GitHub status; it does not run the checks. It requires
+authenticated GitHub CLI access and, by default, refuses commits that have not
+been pushed (refreshing a stale tracking ref before refusing). Posting a status
+does not require it for merges: repository enforcement is separate and must be
+configured by an administrator with `gh signoff install`.
 
 The vendored [anti-slop](https://github.com/dmmulroy/anti-slop) generic and Effect
 rules also run through `npm run lint`, with all rules enabled as errors. Source

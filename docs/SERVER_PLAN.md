@@ -227,14 +227,12 @@ deye-monitor/
 │   ├── wrangler.jsonc
 │   ├── tsconfig.json
 │   └── package.json
-├── .github/
-│   └── workflows/                     # server checks and deployment
 └── README.md
 ```
 
 Each invocation builds/provides only the required Effect environment. Avoid unbounded background fibers or assumptions about global mutable token caches persisting between Worker invocations. Keep Deye tokens in memory only when safely scoped, or use a controlled persistent strategy if required.
 
-All backend development and deployment commands run from `server/` (or explicitly target that directory). The CI workflows should install, test, build, and deploy the server using `server/` as their working directory.
+All backend development and deployment commands run from `server/` (or explicitly target that directory). Run local checks there, then use `gh signoff` from the repository root to post a status for the tested, pushed commit; gh-signoff records a status but does not run checks or configure merge enforcement.
 
 Structure is proposed, not scaffolding committed by this plan.
 
@@ -274,7 +272,7 @@ Structure is proposed, not scaffolding committed by this plan.
 
 ### Phase 4 — Hardening and deployment
 - Configure secrets and production environment.
-- Add CI for lint, typecheck, unit tests, and migration verification.
+- Run lint, typecheck, tests (including migration-backed D1 tests), and build locally; record successful verification with `gh signoff`.
 - Add logging/monitoring and bounded data retention.
 - Exercise outage, restoration, Deye unavailability, token expiry, and stale-reading scenarios.
 - Document local development, migrations, deployment, rollback, and incident triage.
