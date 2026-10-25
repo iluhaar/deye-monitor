@@ -5,11 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "lint": "oxlint --deny-warnings src test vitest.config.ts",
+    "lint": "oxlint --deny-warnings src test scripts vitest.config.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "build": "wrangler deploy --dry-run",
+    "db:verify:migrations": "node scripts/verify-migrations.mjs",
+    "verify": "npm run lint && npm run typecheck && npm test && npm run build && npm run db:verify:migrations",
     "db:migrations:list": "wrangler d1 migrations list DB",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "db:migrate:remote": "wrangler d1 migrations apply DB --remote"

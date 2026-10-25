@@ -61,7 +61,7 @@ replay/throttle history.
 
 ## Verification
 
-`server/test/refresh-guard.test.ts` applies both migrations to Workers-runtime D1
+`server/test/refresh-guard.test.ts` applies all three migrations to Workers-runtime D1
 and exercises contention across instances, throttling/release, expired takeover,
 owner/epoch fencing, atomic snapshot/event/poll writes, rollback/retry, persisted
 watermarks, equal/backward/future observations and concurrent replay. It makes no

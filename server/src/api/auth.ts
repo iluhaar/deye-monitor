@@ -2,9 +2,19 @@ import type { Context, Next } from "hono"
 import { Schema } from "effect"
 import type { Env } from "../env"
 
-const RefreshSecretSchema = Schema.String.pipe(
-  Schema.check(Schema.isPattern(/^\S{32,4096}$/u)),
+const MIN_API_SECRET_LENGTH = 32
+const MAX_API_SECRET_LENGTH = 4096
+const BEARER_PREFIX = "Bearer "
+const MAX_BEARER_HEADER_LENGTH = BEARER_PREFIX.length + MAX_API_SECRET_LENGTH
+
+const ApiSecretSchema = Schema.String.pipe(
+  Schema.check(Schema.isPattern(/^\S+$/u)),
 )
+
+function isValidApiSecret(value: string | undefined): value is string {
+  return value !== undefined && value.length >= MIN_API_SECRET_LENGTH &&
+    value.length <= MAX_API_SECRET_LENGTH && Schema.is(ApiSecretSchema)(value)
+}
 
 function constantTimeEqual(left: string, right: string): boolean {
   const length = Math.max(left.length, right.length)
@@ -18,13 +28,19 @@ function constantTimeEqual(left: string, right: string): boolean {
 }
 
 export function hasValidBearerToken(request: Request, configured: string | undefined): boolean {
-  if (!Schema.is(Schema.NonEmptyString)(configured)) return false
+  if (!isValidApiSecret(configured)) return false
   const authorization = request.headers.get("Authorization")
 
-  if (authorization === null) return false
-  const match = /^Bearer ([^\s]+)$/iu.exec(authorization)
+  if (authorization === null || authorization.length > MAX_BEARER_HEADER_LENGTH ||
+    authorization.slice(0, BEARER_PREFIX.length).toLowerCase() !== BEARER_PREFIX.toLowerCase()) {
+    return false
+  }
 
-  return match !== null && constantTimeEqual(match[1], configured)
+  const provided = authorization.slice(BEARER_PREFIX.length)
+
+  if (!isValidApiSecret(provided)) return false
+
+  return constantTimeEqual(provided, configured)
 }
 
 export async function requireBearerToken(
@@ -53,9 +69,9 @@ export async function requireRefreshToken(
   const provided = context.req.header("X-Refresh-Token")
   context.header("Vary", "Authorization, X-Refresh-Token")
 
-  if (!Schema.is(RefreshSecretSchema)(configured) ||
+  if (!isValidApiSecret(configured) ||
     constantTimeEqual(configured, context.env.API_BEARER_TOKEN ?? "") ||
-    provided === undefined || provided.length > 4096 || !constantTimeEqual(provided, configured)) {
+    provided === undefined || !isValidApiSecret(provided) || !constantTimeEqual(provided, configured)) {
     return context.json(
       {
         ok: false,

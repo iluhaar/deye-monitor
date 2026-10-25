@@ -20,20 +20,31 @@ composition and outcome semantics are in [`docs/ingestion.md`](docs/ingestion.md
 Manual-refresh configuration and activation are in
 [`docs/manual-refresh.md`](docs/manual-refresh.md).
 
+Deployment security controls, credential rotation, and operator-side Access
+and edge rate-limit requirements are documented in
+[`docs/security.md`](docs/security.md). Access policies and edge rate limits are
+not configured by this repository.
+
 ## Server development
 
 ```sh
 cd server
 npm ci
-npm run lint
-npm run typecheck
-npm test
-npm run build
+npm run verify
 ```
 
-Linting uses Oxlint with correctness rules and TypeScript/Vitest plugins;
-warnings fail the lint check. `npm test` also applies the configured D1
-migrations in the Workers-runtime test database.
+`npm run verify` is the local verification gate. It runs lint, typecheck, the
+test suite, the Wrangler dry-run build, and an isolated D1 migration check in
+sequence. Linting uses Oxlint with correctness rules and TypeScript/Vitest
+plugins; warnings fail the lint check. `npm test` applies the configured D1
+migrations in the Workers-runtime test database. The migration check separately
+creates fresh temporary persistence under `/tmp/opencode`, applies the
+configured migrations with Wrangler in local mode, checks the applied migration
+set and expected schema, then reapplies to check idempotence. Its temporary
+database is removed afterward; every D1 command uses an explicit
+`--persist-to`, so this gate does not use or alter the operator's `.wrangler`
+database or any remote D1 database. The individual lint, typecheck, test, and
+build scripts remain available for focused runs.
 
 ## Local signoff
 

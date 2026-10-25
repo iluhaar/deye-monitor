@@ -23,7 +23,16 @@ import {
   type TelemetryStore,
 } from "../services/StorageService"
 import { requireBearerToken, requireRefreshToken } from "./auth"
-import { encodeEventCursor, InvalidEventsQuery, parseEventsQuery } from "./query"
+import {
+  MAX_API_QUERY_LENGTH,
+  MAX_API_URL_LENGTH,
+  MAX_EVENT_CURSOR_ID_LENGTH,
+  MAX_EVENT_DATE_LENGTH,
+  encodeEventCursor,
+  InvalidEventsQuery,
+  parseEventsQuery,
+  validateEventsQueryBounds,
+} from "./query"
 
 type JsonSuccess<T> = { readonly ok: true; readonly data: T }
 
@@ -39,6 +48,21 @@ export interface AppOptions {
 }
 
 const unavailableStatus = unavailableSnapshot()
+const eventsPath = "/api/v1/events"
+const refreshPath = "/api/v1/refresh"
+
+const readPaths = new Set([
+  "/api/v1/status",
+  "/api/v1/telemetry",
+  "/api/v1/battery",
+  eventsPath,
+  "/api/v1/health",
+])
+
+const MAX_EVENTS_PAGE_SIZE = 100
+const MAX_PUBLIC_EVIDENCE_COUNT = 16
+const MAX_PUBLIC_EVIDENCE_LENGTH = 64
+const MAX_EVENTS_RESPONSE_BYTES = 1_000_000
 
 function success<T>(data: T): JsonSuccess<T> {
   return { ok: true, data }
@@ -99,9 +123,17 @@ function evaluate(
   env: Env,
   nowMs: number,
 ): EvaluatedTelemetrySnapshot | null {
-  return snapshot === null
-    ? null
-    : evaluateSnapshot(snapshot, nowMs, thresholdSeconds(env))
+  if (snapshot === null) return null
+
+  if (snapshot.fetchedAt.length > MAX_EVENT_DATE_LENGTH ||
+    (snapshot.measuredAt !== null && snapshot.measuredAt.length > MAX_EVENT_DATE_LENGTH) ||
+    snapshot.grid.evidence.length > MAX_PUBLIC_EVIDENCE_COUNT ||
+    snapshot.grid.evidence.some((evidence) => evidence.length === 0 ||
+      evidence.length > MAX_PUBLIC_EVIDENCE_LENGTH)) {
+    throw new StorageError({ operation: "read_snapshot" })
+  }
+
+  return evaluateSnapshot(snapshot, nowMs, thresholdSeconds(env))
 }
 
 function publicSnapshot(snapshot: EvaluatedTelemetrySnapshot) {
@@ -137,7 +169,37 @@ function publicStatus(snapshot: EvaluatedTelemetrySnapshot | null) {
 }
 
 function publicEvents(page: EventPage) {
-  return {
+  if (page.events.length > MAX_EVENTS_PAGE_SIZE) {
+    throw new StorageError({ operation: "read_events" })
+  }
+
+  for (const event of page.events) {
+    if (event.id.length === 0 || event.id.length > MAX_EVENT_CURSOR_ID_LENGTH ||
+      event.observedAt.length > MAX_EVENT_DATE_LENGTH ||
+      (event.previousObservedAt !== null && event.previousObservedAt.length > MAX_EVENT_DATE_LENGTH) ||
+      event.evidence.length > MAX_PUBLIC_EVIDENCE_COUNT ||
+      event.evidence.some((evidence) => evidence.length === 0 || evidence.length > MAX_PUBLIC_EVIDENCE_LENGTH)) {
+      throw new StorageError({ operation: "read_events" })
+    }
+  }
+
+  if (page.nextCursor !== null && (page.nextCursor.id.length === 0 ||
+    page.nextCursor.id.length > MAX_EVENT_CURSOR_ID_LENGTH ||
+    page.nextCursor.observedAt.length > MAX_EVENT_DATE_LENGTH)) {
+    throw new StorageError({ operation: "read_events" })
+  }
+
+  let nextCursor: string | null
+
+  try {
+    nextCursor = encodeEventCursor(page.nextCursor)
+  } catch (error) {
+    if (!(error instanceof InvalidEventsQuery)) throw error
+
+    throw new StorageError({ operation: "read_events" })
+  }
+
+  const data = {
     events: page.events.map((event) => ({
       id: event.id,
       status: event.status,
@@ -147,8 +209,14 @@ function publicEvents(page: EventPage) {
       evidence: event.evidence,
       source: event.source,
     })),
-    nextCursor: encodeEventCursor(page.nextCursor),
+    nextCursor,
   }
+
+  if (new TextEncoder().encode(JSON.stringify(success(data))).byteLength > MAX_EVENTS_RESPONSE_BYTES) {
+    throw new StorageError({ operation: "read_events" })
+  }
+
+  return data
 }
 
 function fetchedAgeSeconds(snapshot: EvaluatedTelemetrySnapshot | null, nowMs: number) {
@@ -160,6 +228,45 @@ function fetchedAgeSeconds(snapshot: EvaluatedTelemetrySnapshot | null, nowMs: n
   return Math.max(0, Math.floor((nowMs - fetchedMs) / 1000))
 }
 
+function queryLength(requestUrl: string): number {
+  const queryStart = requestUrl.indexOf("?")
+
+  if (queryStart === -1) return 0
+
+  const fragmentStart = requestUrl.indexOf("#", queryStart)
+  const queryEnd = fragmentStart === -1 ? requestUrl.length : fragmentStart
+
+  return queryEnd - queryStart
+}
+
+function hasQuery(requestUrl: string): boolean {
+  return requestUrl.includes("?")
+}
+
+function requestHasBody(request: Request): boolean {
+  if (request.body !== null || request.headers.has("Transfer-Encoding")) return true
+
+  const contentLength = request.headers.get("Content-Length")
+
+  if (contentLength === null) return false
+
+  if (contentLength.length > 20 || !/^(?:0|[1-9]\d*)$/u.test(contentLength)) return true
+
+  return contentLength !== "0"
+}
+
+function discardRequestBody(request: Request): void {
+  const body = request.body
+
+  if (body === null) return
+
+  try {
+    void Promise.resolve(body.cancel()).catch(() => undefined)
+  } catch {
+    // A locked or non-standard request stream must not delay rejection.
+  }
+}
+
 export function createApp(options: AppOptions = {}) {
   const app = new Hono<{ Bindings: Env }>()
   const now = options.now ?? Date.now
@@ -169,11 +276,53 @@ export function createApp(options: AppOptions = {}) {
     context.header("Vary", "Authorization")
     await next()
   })
+  app.use("/api/v1/*", async (context, next) => {
+    const requestUrl = context.req.url
+
+    if (requestUrl.length > MAX_API_URL_LENGTH) {
+      return context.json(failure("REQUEST_TOO_LARGE", "Request is too large"), 414)
+    }
+
+    const querySize = queryLength(requestUrl)
+
+    if (querySize > MAX_API_QUERY_LENGTH && context.req.path !== refreshPath) {
+      return context.json(failure("REQUEST_TOO_LARGE", "Request is too large"), 414)
+    }
+
+    await next()
+  })
   app.use("/api/v1/*", requireBearerToken)
   app.use("/api/v1/refresh", requireRefreshToken)
+  app.use("/api/v1/*", async (context, next) => {
+    const requestUrl = context.req.url
 
-  app.post("/api/v1/refresh", async (context) => {
-    if (new URL(context.req.url).search !== "" || context.req.raw.body !== null) {
+    if (requestHasBody(context.req.raw)) {
+      discardRequestBody(context.req.raw)
+
+      if (context.req.path === refreshPath) {
+        return context.json(failure("INVALID_REFRESH_REQUEST", "Refresh accepts no query or body"), 400)
+      }
+
+      return context.json(failure("INVALID_REQUEST", "Request body is not accepted"), 400)
+    }
+
+    if (readPaths.has(context.req.path) && context.req.path !== eventsPath && hasQuery(requestUrl)) {
+      return context.json(failure("INVALID_QUERY", "Invalid query"), 400)
+    }
+
+    if (context.req.path === eventsPath) {
+      try {
+        validateEventsQueryBounds(new URL(requestUrl))
+      } catch {
+        return context.json(failure("INVALID_QUERY", "Invalid events query"), 400)
+      }
+    }
+
+    await next()
+  })
+
+  app.post(refreshPath, async (context) => {
+    if (hasQuery(context.req.url) || requestHasBody(context.req.raw)) {
       return context.json(failure("INVALID_REFRESH_REQUEST", "Refresh accepts no query or body"), 400)
     }
 
@@ -328,7 +477,7 @@ export function createApp(options: AppOptions = {}) {
     }
   })
 
-  app.get("/api/v1/events", async (context) => {
+  app.get(eventsPath, async (context) => {
     const id = stationId(context.env)
 
     if (id === null) {

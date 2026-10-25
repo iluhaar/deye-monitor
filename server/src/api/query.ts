@@ -1,6 +1,14 @@
 import { Schema } from "effect"
 import type { EventCursor, EventQuery } from "../services/StorageService"
 
+export const MAX_API_URL_LENGTH = 4096
+export const MAX_API_QUERY_LENGTH = 2048
+export const MAX_EVENT_CURSOR_LENGTH = 512
+export const MAX_EVENT_DATE_LENGTH = 64
+export const MAX_EVENT_CURSOR_ID_LENGTH = 128
+
+const EVENT_QUERY_KEYS = new Set(["limit", "cursor", "from", "to"])
+
 const LimitSchema = Schema.NumberFromString.pipe(
   Schema.check(
     Schema.isInt(),
@@ -25,8 +33,35 @@ export class InvalidEventsQuery extends Error {
   readonly _tag = "InvalidEventsQuery"
 }
 
+export function validateEventsQueryBounds(url: URL): void {
+  if (url.search.length > MAX_API_QUERY_LENGTH) throw new InvalidEventsQuery()
+
+  const seen = new Set<string>()
+  let parameterCount = 0
+
+  for (const [key, value] of url.searchParams) {
+    parameterCount += 1
+
+    if (parameterCount > EVENT_QUERY_KEYS.size || !EVENT_QUERY_KEYS.has(key) || seen.has(key)) {
+      throw new InvalidEventsQuery()
+    }
+
+    seen.add(key)
+
+    if (key === "limit" && value.length > 3) throw new InvalidEventsQuery()
+
+    if (key === "cursor" && value.length > MAX_EVENT_CURSOR_LENGTH) throw new InvalidEventsQuery()
+
+    if ((key === "from" || key === "to") && value.length > MAX_EVENT_DATE_LENGTH) {
+      throw new InvalidEventsQuery()
+    }
+  }
+}
+
 function normalizeTimestamp(value: string | undefined): string | null {
   if (value === undefined) return null
+
+  if (value.length > MAX_EVENT_DATE_LENGTH) throw new InvalidEventsQuery()
 
   if (value.trim() === "") throw new InvalidEventsQuery()
   const millis = Date.parse(value)
@@ -53,6 +88,8 @@ function decodeBase64Url(value: string): string {
 function decodeCursor(value: string | undefined): EventCursor | null {
   if (value === undefined) return null
 
+  if (value.length > MAX_EVENT_CURSOR_LENGTH) throw new InvalidEventsQuery()
+
   if (value.trim() === "") throw new InvalidEventsQuery()
 
   let parsed: unknown
@@ -61,7 +98,10 @@ function decodeCursor(value: string | undefined): EventCursor | null {
     parsed = JSON.parse(decodeBase64Url(value))
     const cursor = Schema.decodeUnknownSync(CursorSchema)(parsed)
 
-    if (cursor.id.trim() === "") throw new InvalidEventsQuery()
+    if (cursor.id.trim() === "" || cursor.id.length > MAX_EVENT_CURSOR_ID_LENGTH) {
+      throw new InvalidEventsQuery()
+    }
+
     const observedAt = normalizeTimestamp(cursor.observedAt)
 
     if (observedAt === null) throw new InvalidEventsQuery()
@@ -75,18 +115,30 @@ function decodeCursor(value: string | undefined): EventCursor | null {
 
 export function encodeEventCursor(cursor: EventCursor | null): string | null {
   if (cursor === null) return null
+
+  if (cursor.id.length === 0 || cursor.id.length > MAX_EVENT_CURSOR_ID_LENGTH ||
+    cursor.observedAt.length > MAX_EVENT_DATE_LENGTH) {
+    throw new InvalidEventsQuery()
+  }
+
   const bytes = new TextEncoder().encode(JSON.stringify(cursor))
   let binary = ""
 
   for (const byte of bytes) binary += String.fromCharCode(byte)
 
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/u, "")
+  const encoded = btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/u, "")
+
+  if (encoded.length > MAX_EVENT_CURSOR_LENGTH) throw new InvalidEventsQuery()
+
+  return encoded
 }
 
 export function parseEventsQuery(
   url: URL,
   stationId: string,
 ): EventQuery {
+  validateEventsQueryBounds(url)
+
   const input = {
     limit: url.searchParams.get("limit") ?? undefined,
     cursor: url.searchParams.get("cursor") ?? undefined,

@@ -4,6 +4,7 @@ import type { TelemetrySnapshot } from "../src/domain/telemetry"
 import { StorageService, type TelemetryStore } from "../src/services/StorageService"
 
 export const NOW = Date.parse("2026-10-24T12:00:00.000Z")
+export const API_BEARER_TOKEN = "synthetic-test-secret-bearer-token-with-at-least-32-characters"
 
 export function makeSnapshot(
   overrides: Partial<TelemetrySnapshot> = {},
@@ -35,13 +36,13 @@ export function makeSnapshot(
 }
 
 export const authenticatedEnv: Env = {
-  API_BEARER_TOKEN: "test-secret",
+  API_BEARER_TOKEN,
   STATION_ID: "station-1",
   FRESHNESS_THRESHOLD_SECONDS: "180",
 }
 
 export function authorizationHeaders(): HeadersInit {
-  return { Authorization: "Bearer test-secret" }
+  return { Authorization: `Bearer ${API_BEARER_TOKEN}` }
 }
 
 export function storageLayer(

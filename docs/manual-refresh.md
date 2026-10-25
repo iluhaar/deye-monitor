@@ -11,18 +11,26 @@ Refresh requires **both** headers:
 - `Authorization: Bearer <API_BEARER_TOKEN>` — the existing read credential.
 - `X-Refresh-Token: <API_REFRESH_TOKEN>` — a separate operator credential.
 
-The refresh secret must be distinct from the read secret, 32–4096 non-whitespace
-characters. Generate independent cryptographically random credentials; length
-checks alone do not guarantee entropy. This is scoped additional authorization,
-not a claim of multi-factor authentication. A refresh token alone does not grant
-read access. Missing read authorization returns `401`; missing, weak, shared or
-incorrect refresh authorization returns `403`, including when it is unconfigured.
+Both tokens must be 32–4096 non-whitespace characters and independently
+cryptographically random; length checks alone do not guarantee entropy. The
+refresh secret must be distinct from the read secret. This is scoped additional
+authorization, not a claim of multi-factor authentication. A refresh token alone
+does not grant read access. Missing or invalid read authorization returns `401`;
+missing, weak, shared or incorrect refresh authorization returns `403` after read
+authentication, including when refresh is unconfigured. Existing read secrets
+outside these bounds will now fail with `401`; replace them securely and
+coordinate callers before using the updated Worker.
 
 Send no query string and no body. No client-provided station, device, region,
 credential, cadence, or force flag is accepted. Unsupported methods never invoke
-ingestion. Responses use the existing JSON envelope and `Cache-Control: no-store`.
+ingestion. Any refresh query (including a bare `?`) or body returns
+`400 INVALID_REFRESH_REQUEST` after both authentication checks; an oversized full
+URL returns `414 REQUEST_TOO_LARGE` before authentication. Responses use the
+existing JSON envelope and `Cache-Control: no-store`.
 After read authentication they vary on both `Authorization` and `X-Refresh-Token`.
 Cross-origin access is not enabled.
+See the [security runbook](./security.md) for detailed request/public-output
+bounds and validation ordering.
 Do not put credentials in URLs, command history, source control or logs; use an
 HTTP client that injects headers from secret storage.
 
@@ -43,8 +51,8 @@ belong in Wrangler secret bindings. The Worker does not automatically import
 | --- | --- |
 | `DB` | D1 binding with all three migrations applied |
 | `STATION_ID` | Non-empty internal key, not the upstream device serial |
-| `API_BEARER_TOKEN` | Existing secret read credential |
-| `API_REFRESH_TOKEN` | Independent secret refresh credential, at least 32 characters |
+| `API_BEARER_TOKEN` | Secret read credential, 32–4096 non-whitespace characters. Out-of-range existing values fail `401`; securely replace before rollout. |
+| `API_REFRESH_TOKEN` | Distinct secret refresh credential, 32–4096 non-whitespace characters |
 | `REFRESH_ENABLED` | Exactly `true` to activate; unset/other values disable refresh |
 | `REFRESH_MIN_INTERVAL_SECONDS` | Explicit integer `1..3600`; no default is inferred |
 | `DEYE_BASE_URL` | Explicit HTTPS regional base URL validated for the account |
@@ -97,6 +105,7 @@ Errors use `{ "ok": false, "error": { "code": "...", "message": "..." } }`:
 | HTTP | Code | Meaning |
 | --- | --- | --- |
 | `400` | `INVALID_REFRESH_REQUEST` | Query or body supplied |
+| `414` | `REQUEST_TOO_LARGE` | Full request URL exceeds the limit; rejected before authentication |
 | `401` / `403` | `UNAUTHORIZED` / `FORBIDDEN` | Read / refresh authorization denied |
 | `429` | `REFRESH_IN_PROGRESS` | A durable lease is active |
 | `429` | `REFRESH_THROTTLED` | Persisted minimum interval has not elapsed |
@@ -121,7 +130,10 @@ commit. Inspect stored data and respect the throttle instead of forcing retries.
 Set `REFRESH_ENABLED` to a value other than `true` to stop new refresh operations.
 Rotate the two API credentials independently via secret storage. Already
 authorized in-flight work remains subject to its existing finite budget and
-lease; disabling new requests does not retroactively cancel it.
+lease; disabling new requests does not retroactively cancel it. For coordinated
+rotation, cutover and recovery guidance, and deployment prerequisites for
+Cloudflare Access and edge rate limits, see the [security runbook](./security.md).
+Those edge controls are not configured or verified by this source tree.
 
 ## Verification boundary
 
