@@ -82,7 +82,7 @@ layer construction and normalization do not perform live I/O. Offline tests
 can provide a deterministic `DeyeRuntime.fetch` implementation instead.
 
 No upstream token-refresh endpoint is assumed: reauthentication uses token
-issuance. No server refresh API is added. Token reauthentication is bounded,
+issuance. Token reauthentication is bounded,
 and request retries are bounded by the configured `maxRetries`,
 `retryBaseDelayMs`, and `retryMaxDelayMs` values; neither path should become an
 unbounded loop.
@@ -100,9 +100,9 @@ bodies are canceled without waiting on upstream stream cleanup.
   from server fetch time (`fetchedAt`). Grid status remains `unknown` and
   unverified, battery mode remains `unknown`, and power sign semantics are not
   approved.
-- The adapter is not connected to API reads, ingestion, Cron, persistence
-  writes, or live activation. The existing API remains D1-only, and this slice
-  does not add a refresh API endpoint.
+- The adapter composes with finite ingestion and fenced D1 persistence through
+  the opt-in [manual refresh endpoint](./manual-refresh.md). GET routes remain
+  D1-only; Cron and live activation are not enabled by default.
 - Before enabling live reads, validate account/region and HTTPS hostname
   configuration, token expiry and lifecycle behavior with live checks, polling
   cadence and quotas, and freshness safety. Unverified live reads may retain

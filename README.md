@@ -5,7 +5,7 @@ foundation: a Cloudflare Worker using Hono and Effect 4.0.6, the existing
 conservative normalized-domain evaluator, authenticated read-only API routes,
 and a D1 read layer with migrations. A read-only Deye adapter now composes with
 conservative normalization and finite, fenced D1 ingestion. The ingestion
-program is offline-tested but not exposed through an HTTP refresh endpoint.
+program is exposed through an opt-in, strongly authorized manual refresh endpoint.
 
 ## Implementation tracking
 
@@ -15,9 +15,10 @@ Read-only adapter configuration and composition are documented in
 [`docs/deye-adapter.md`](docs/deye-adapter.md).
 
 The durable refresh guard and atomic observation-write contract are documented
-in [`docs/refresh-protocol.md`](docs/refresh-protocol.md); ingestion and the
-manual refresh endpoint are not connected to Worker entrypoints. Finite program
+in [`docs/refresh-protocol.md`](docs/refresh-protocol.md). Finite program
 composition and outcome semantics are in [`docs/ingestion.md`](docs/ingestion.md).
+Manual-refresh configuration and activation are in
+[`docs/manual-refresh.md`](docs/manual-refresh.md).
 
 ## Server development
 
@@ -47,6 +48,9 @@ For local authenticated requests, put `API_BEARER_TOKEN` and the internal
 
 - `GET /api/v1/status`, `/telemetry`, `/battery`, `/events`, and `/health` are
   implemented and authenticated fail-closed.
+- `POST /api/v1/refresh` additionally requires a distinct `X-Refresh-Token`,
+  explicit activation and upstream configuration. It rejects query/body input
+  and uses persisted throttling; it is disabled by default.
 - Reads use D1 and re-evaluate freshness from measurement and fetch timestamps;
   stored snapshots are not changed by reads. Event pagination is cursor-based,
   range-validated, and deterministic for tied timestamps.
@@ -59,14 +63,14 @@ For local authenticated requests, put `API_BEARER_TOKEN` and the internal
   nullable missing fields, and separate source and fetch times. Grid status
   remains `unknown`/unverified and battery mode remains `unknown`; no approved
   grid classifier is claimed. Zero power is not outage evidence.
-- The read-only Deye adapter composes with normalization and finite ingestion,
-  but no Worker entrypoint invokes it yet. No production calls
+- The read-only Deye adapter composes with normalization and finite ingestion
+  through the configured manual refresh route. No production calls
   have been made, and credentials are not test fixtures. Regional host/config,
   token-lifecycle live checks, polling cadence, power sign semantics, and the
   approved grid classifier still require validation.
 - Finite ingestion atomically stores snapshots, poll metadata and verified
-  transition history through the durable refresh guard. The refresh endpoint
-  and Cron are not wired; existing API routes remain stored-data reads. Failed
+  transition history through the durable refresh guard. Cron is not wired;
+  existing GET routes remain stored-data reads. Failed
   collection degrades effective status without replacing stored measurements.
   No deployment or production readiness is implied.
 - The migration includes `stations`, `latest_snapshots`, `grid_events`,

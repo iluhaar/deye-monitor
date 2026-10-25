@@ -13,13 +13,16 @@ import type {
 } from "../domain/telemetry"
 import { MissingBindingError, StorageError } from "../errors/StorageErrors"
 import { storageLayer } from "../runtime/layers"
+import { refreshLayer } from "../runtime/refresh"
+import { PollingService } from "../services/PollingService"
+import type { PollingServiceShape } from "../services/PollingService"
 import {
   StorageService,
   type EventPage,
   type EventQuery,
   type StorageServiceShape,
 } from "../services/StorageService"
-import { requireBearerToken } from "./auth"
+import { requireBearerToken, requireRefreshToken } from "./auth"
 import { encodeEventCursor, InvalidEventsQuery, parseEventsQuery } from "./query"
 
 type JsonSuccess<T> = { readonly ok: true; readonly data: T }
@@ -30,6 +33,7 @@ type JsonFailure = {
 
 export interface AppOptions {
   readonly storageLayer?: Layer.Layer<StorageServiceShape>
+  readonly pollingLayer?: Layer.Layer<PollingServiceShape>
   readonly now?: () => number
 }
 
@@ -167,6 +171,62 @@ export function createApp(options: AppOptions = {}) {
     await next()
   })
   app.use("/api/v1/*", requireBearerToken)
+  app.use("/api/v1/refresh", requireRefreshToken)
+
+  app.post("/api/v1/refresh", async (context) => {
+    if (new URL(context.req.url).search !== "" || context.req.raw.body !== null) {
+      return context.json(failure("INVALID_REFRESH_REQUEST", "Refresh accepts no query or body"), 400)
+    }
+    const id = stationId(context.env)
+    if (id === null || context.env.REFRESH_ENABLED !== "true") {
+      return context.json(failure("SERVICE_NOT_CONFIGURED", "Refresh is not configured"), 503)
+    }
+    try {
+      const layer = options.pollingLayer ?? refreshLayer(context.env, thresholdSeconds(context.env))
+      const result = await Effect.runPromise(PollingService.use((polling) => polling.refresh(id))
+        .pipe(Effect.provide(layer)), { signal: context.req.raw.signal })
+      if (result.status !== "completed") {
+        const retryAfter = Number.isFinite(result.retryAfterSeconds)
+          ? Math.max(1, Math.min(3600, Math.ceil(result.retryAfterSeconds))) : 1
+        context.header("Retry-After", String(retryAfter))
+        return context.json(failure(result.status === "busy" ? "REFRESH_IN_PROGRESS" : "REFRESH_THROTTLED",
+          result.status === "busy" ? "A refresh is already in progress" : "Refresh is temporarily throttled"), 429)
+      }
+      if (result.outcome === "error") {
+        if (result.errorCategory === "timeout") {
+          return context.json(failure("REFRESH_TIMEOUT", "Refresh timed out"), 504)
+        }
+        if (result.errorCategory === "not_configured") {
+          return context.json(failure("SERVICE_NOT_CONFIGURED", "Refresh is not configured"), 503)
+        }
+        if (result.errorCategory === "storage") {
+          return context.json(failure("STORAGE_UNAVAILABLE", "Storage is unavailable"), 503)
+        }
+        if (result.errorCategory === "rate_limit") {
+          return context.json(failure("UPSTREAM_RATE_LIMITED", "Upstream service is temporarily limited"), 503)
+        }
+        return context.json(failure("UPSTREAM_UNAVAILABLE", "Upstream refresh failed"), 502)
+      }
+      const snapshot = await runStorage(StorageService.use((storage) => storage.getLatestSnapshot(id)),
+        options.storageLayer ?? storageLayer(context.env))
+      const evaluated = evaluate(snapshot, context.env, now())
+      return context.json(success({ refresh: { outcome: result.outcome },
+        telemetry: evaluated === null ? null : publicSnapshot(evaluated) }))
+    } catch (error) {
+      if (isTagged(error, "RefreshConfigurationError")) {
+        return context.json(failure("SERVICE_NOT_CONFIGURED", "Refresh is not configured"), 503)
+      }
+      if (isTagged(error, "PollingError")) {
+        const category = (error as { category?: unknown }).category
+        if (category === "timeout") return context.json(failure("REFRESH_TIMEOUT", "Refresh timed out"), 504)
+        if (category === "configuration") {
+          return context.json(failure("SERVICE_NOT_CONFIGURED", "Refresh is not configured"), 503)
+        }
+        return context.json(failure("STORAGE_UNAVAILABLE", "Storage is unavailable"), 503)
+      }
+      return storageFailureResponse(context, error)
+    }
+  })
 
   app.get("/api/v1/status", async (context) => {
     const id = stationId(context.env)

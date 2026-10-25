@@ -33,3 +33,25 @@ export async function requireBearerToken(
   }
   await next()
 }
+
+/** Refresh requires BOTH read access and a separate operator credential. */
+export async function requireRefreshToken(
+  context: Context<{ Bindings: Env }>,
+  next: Next,
+): Promise<Response | void> {
+  const configured = context.env.API_REFRESH_TOKEN
+  const provided = context.req.header("X-Refresh-Token")
+  context.header("Vary", "Authorization, X-Refresh-Token")
+  if (typeof configured !== "string" || !/^\S{32,4096}$/u.test(configured) ||
+    constantTimeEqual(configured, context.env.API_BEARER_TOKEN ?? "") ||
+    provided === undefined || provided.length > 4096 || !constantTimeEqual(provided, configured)) {
+    return context.json(
+      {
+        ok: false,
+        error: { code: "FORBIDDEN", message: "Refresh authorization required" },
+      },
+      403,
+    )
+  }
+  await next()
+}

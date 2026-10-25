@@ -1,7 +1,8 @@
 # Finite request-driven ingestion
 
 The ingestion program is implemented independently of HTTP authorization and
-scheduling. No Worker entrypoint invokes it yet. There is no refresh endpoint,
+scheduling. The opt-in [manual refresh endpoint](./manual-refresh.md) invokes it
+with stronger authorization and explicit activation/configuration. There is no
 Cron trigger, production deployment, or approved Deye grid classifier.
 
 ## Composition
@@ -18,8 +19,9 @@ Layer for `PollingService`. It composes:
 Construction performs no network I/O. Callers must provide the real regional
 configuration and secrets out of source control, an existing internal station
 row, all three D1 migrations, explicit timing/throttle policy, and a freshness
-threshold. The eventual protected refresh handler is responsible for these
-bindings. GET routes remain D1-only and never perform upstream requests.
+threshold. The protected refresh handler supplies these bindings and creates an
+internal station if needed. GET routes remain D1-only and never perform upstream
+requests.
 
 The timing policy reserves a bounded acquisition interval, a finite work budget,
 failure-recording time, and bounded best-effort release. The lease must exceed
@@ -86,5 +88,6 @@ reads, and full adapter → normalizer → ingestion → D1 composition using fa
 HTTP. The live Deye normalizer remains unknown/unverified with null directional
 power; synthetic confirmed tests do not validate a production mapping.
 
-Deployment, live upstream verification, stronger manual-refresh authorization,
-HTTP throttle responses and release scenarios remain separate work.
+Deployment, live upstream verification and release scenarios remain separate
+work. Stronger manual-refresh authorization and HTTP throttle responses are
+documented in [manual-refresh.md](./manual-refresh.md).
