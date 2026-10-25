@@ -1,7 +1,11 @@
 export type GridStatus = "online" | "offline" | "unknown"
+
 export type GridConfidence = "confirmed" | "unverified"
+
 export type FreshnessStatus = "fresh" | "stale" | "unavailable"
+
 export type BatteryMode = "charging" | "discharging" | "idle" | "unknown"
+
 export type PowerSignConvention = "unverified"
 
 export interface FreshnessInfo {

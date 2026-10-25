@@ -1,21 +1,20 @@
 import { applyD1Migrations, env } from "cloudflare:test"
-import type { D1Database } from "@cloudflare/workers-types"
-import type { D1Migration } from "@cloudflare/vitest-plugin"
-import { Effect, Layer } from "effect"
+import { Effect, Layer, Schema } from "effect"
 import { beforeAll, describe, expect, it } from "vitest"
 import { createApp } from "../src/api/app"
 import type { Env } from "../src/env"
-import { refreshConfiguration, refreshLayer } from "../src/runtime/refresh"
+import { RefreshConfigurationError, refreshConfiguration, refreshLayer } from "../src/runtime/refresh"
 import { makePollingService, PollingError, PollingService } from "../src/services/PollingService"
 import type { PollingResult } from "../src/services/PollingService"
 import { emptyStorage, makeSnapshot, NOW } from "./helpers"
 import { makeIngestionStorage } from "../src/storage/IngestionLive"
 
-const bindings = env as unknown as { DB: D1Database; TEST_MIGRATIONS: D1Migration[] }
+const bindings = env
 const db = bindings.DB
 const readToken = "synthetic-read-token-with-at-least-32-characters"
 const refreshToken = "synthetic-refresh-token-with-at-least-32-characters"
 const headers = { Authorization: `Bearer ${readToken}`, "X-Refresh-Token": refreshToken }
+
 const baseEnv: Env = { API_BEARER_TOKEN: readToken, API_REFRESH_TOKEN: refreshToken,
   STATION_ID: "synthetic-station", REFRESH_ENABLED: "true" }
 
@@ -27,9 +26,13 @@ function request(path = "/api/v1/refresh", init: RequestInit = {}) {
 
 function stub(result: PollingResult = { status: "completed", outcome: "unverified", errorCategory: null }) {
   let calls = 0
+
   const app = createApp({ now: () => NOW, storageLayer: emptyStorage(makeSnapshot()),
-    pollingLayer: Layer.succeed(PollingService, { refresh: () => Effect.sync(() => { calls += 1; return result }) }),
+    pollingLayer: Layer.succeed(PollingService, { refresh: () => Effect.sync(() => { calls += 1;
+
+ return result }) }),
   })
+
   return { app, calls: () => calls }
 }
 
@@ -155,6 +158,7 @@ describe("protected manual refresh HTTP boundary", () => {
     const app = createApp({ pollingLayer: Layer.succeed(PollingService, {
       refresh: () => Effect.fail(new PollingError({ category })),
     }) })
+
     expect((await app.fetch(request(), baseEnv)).status).toBe(category === "timeout" ? 504 : 503)
   })
 
@@ -162,6 +166,7 @@ describe("protected manual refresh HTTP boundary", () => {
     const app = createApp({ pollingLayer: Layer.succeed(PollingService, {
       refresh: () => Effect.die(new Error("synthetic-secret SELECT credentials")),
     }) })
+
     const response = await app.fetch(request(), baseEnv)
     expect(response.status).toBe(500)
     expect(await response.json()).toEqual({ ok: false,
@@ -179,6 +184,7 @@ function configuredEnv(): Env {
 function fakeUpstream(waitForLatest?: () => Promise<void>) {
   let calls = 0
   const measuredAt = new Date(Math.floor((Date.now() - 1000) / 1000) * 1000).toISOString()
+
   const fetch: typeof globalThis.fetch = async (input, init) => {
     calls += 1
     const sent = new Headers(init?.headers)
@@ -186,17 +192,21 @@ function fakeUpstream(waitForLatest?: () => Promise<void>) {
     expect(sent.get("Authorization")).not.toBe(`Bearer ${readToken}`)
     expect(sent.get("Authorization")).not.toBe(`Bearer ${refreshToken}`)
     const path = new URL(String(input)).pathname
+
     if (path === "/v1.0/account/token") {
       return Response.json({ success: true, code: "1000000", accessToken: "synthetic-upstream-token",
         expiresIn: "5183999", tokenType: "bearer" })
     }
+
     if (path !== "/v1.0/device/latest") throw new Error("Unexpected fake path")
     expect(JSON.parse(String(init?.body))).toMatchObject({ deviceList: ["synthetic-device"] })
     await waitForLatest?.()
+
     return Response.json({ success: true, code: "1000000", deviceDataList: [{ deviceSn: "synthetic-device",
       deviceType: "INVERTER", deviceState: 1, collectionTime: Date.parse(measuredAt) / 1000,
       dataList: [{ key: "GridVoltageL1L2", value: "230", unit: "V" }] }] })
   }
+
   return { fetch, calls: () => calls, measuredAt }
 }
 
@@ -204,7 +214,7 @@ describe("refresh activation and real D1 integration", () => {
   it.each([undefined, "", "0", "-1", "1.5", " 180", "3601", "NaN"])(
     "requires an explicit bounded refresh interval: %s", (interval) => {
       expect(() => refreshConfiguration({ ...configuredEnv(), REFRESH_MIN_INTERVAL_SECONDS: interval }))
-        .toThrow()
+        .toThrow(RefreshConfigurationError)
     },
   )
 
@@ -221,7 +231,7 @@ describe("refresh activation and real D1 integration", () => {
     { DEYE_USERNAME: "second-identity" }, { DEYE_DEVICE_TYPE: "LOGGER" },
     { STATION_ID: "synthetic-device" },
   ])("rejects incomplete/ambiguous live configuration before station writes", (missing) => {
-    expect(() => refreshConfiguration({ ...configuredEnv(), ...missing })).toThrow()
+    expect(() => refreshConfiguration({ ...configuredEnv(), ...missing })).toThrow(RefreshConfigurationError)
   })
 
   it("creates the configured internal station only for authorized refresh; GET stays stored-data-only", async () => {
@@ -239,8 +249,10 @@ describe("refresh activation and real D1 integration", () => {
         freshness: { status: "fresh" } } } })
     expect(JSON.stringify(body)).not.toMatch(/synthetic-device|synthetic-app-secret|synthetic-upstream-token|stationId/)
     expect(fake.calls()).toBe(2)
+
     const stored = await app.fetch(new Request("https://example.invalid/api/v1/telemetry",
       { headers: { Authorization: `Bearer ${readToken}` } }), environment)
+
     expect(await stored.json()).toMatchObject({ ok: true, data: { measuredAt: fake.measuredAt } })
     expect(fake.calls()).toBe(2)
     // A different app/layer instance observes the persisted throttle.
@@ -259,10 +271,15 @@ describe("refresh activation and real D1 integration", () => {
     let started!: () => void
     const ready = new Promise<void>((resolve) => { started = resolve })
     const gate = new Promise<void>((resolve) => { unblock = resolve })
-    const fake = fakeUpstream(() => { started(); return gate })
+
+    const fake = fakeUpstream(() => { started();
+
+ return gate })
+
     const first = createApp({ pollingLayer: refreshLayer(environment, 180, { fetch: fake.fetch }) })
     const second = createApp({ pollingLayer: refreshLayer(environment, 180, { fetch: fake.fetch }) })
     const pending = first.fetch(request(), environment)
+
     try {
       await ready
       const overlap = await second.fetch(request(), environment)
@@ -273,6 +290,7 @@ describe("refresh activation and real D1 integration", () => {
     } finally {
       unblock()
     }
+
     expect((await pending).status).toBe(200)
     expect(await db.prepare("SELECT count(*) AS count FROM poll_runs WHERE station_id=?")
       .bind(environment.STATION_ID!).first()).toEqual({ count: 1 })
@@ -285,15 +303,24 @@ describe("refresh activation and real D1 integration", () => {
     const fake = fakeUpstream()
     const first = createApp({ pollingLayer: refreshLayer(environment, 180, { fetch: fake.fetch }) })
     const accepted = await first.fetch(request(), environment)
-    const before = await accepted.json() as { data: { telemetry: { measuredAt: string; fetchedAt: string } } }
+
+    const before = Schema.decodeUnknownSync(Schema.Struct({
+      ok: Schema.Literal(true),
+      data: Schema.Struct({ telemetry: Schema.Struct({ measuredAt: Schema.String, fetchedAt: Schema.String }) }),
+    }))(await accepted.json())
+
     await db.prepare(`UPDATE refresh_guards SET lease_until='1970-01-01T00:00:00.000Z',
       next_allowed_at='1970-01-01T00:00:00.000Z' WHERE station_id=?`).bind(environment.STATION_ID!).run()
     let calls = 0
+
     const deniedFetch: typeof fetch = async (input, init) => {
       calls += 1
+
       if (new URL(String(input)).pathname === "/v1.0/account/token") return fake.fetch(input, init)
+
       return new Response("synthetic-sensitive-upstream-body", { status: 401 })
     }
+
     const second = createApp({ pollingLayer: refreshLayer(environment, 180, { fetch: deniedFetch }) })
     const failed = await second.fetch(request(), environment)
     expect(failed.status).toBe(502)
@@ -305,8 +332,10 @@ describe("refresh activation and real D1 integration", () => {
       measuredAt: before.data.telemetry.measuredAt, fetchedAt: before.data.telemetry.fetchedAt,
       grid: { status: "unknown" }, freshness: { status: "unavailable" },
     } })
+
     const persisted = await db.prepare("SELECT * FROM poll_runs WHERE station_id=?")
       .bind(environment.STATION_ID!).all()
+
     expect(JSON.stringify(persisted)).not.toContain("synthetic-sensitive-upstream-body")
   })
 
@@ -318,15 +347,21 @@ describe("refresh activation and real D1 integration", () => {
       VALUES (?, 'deye-cloud', 'synthetic-grid-test', ?, ?)`)
       .bind(id, new Date(now).toISOString(), new Date(now).toISOString()).run()
     let calls = 0
+
     let snapshot = makeSnapshot({ stationId: id, mappingRevision: "synthetic-grid-test",
       measuredAt: new Date(now - 2000).toISOString(), fetchedAt: new Date(now - 1000).toISOString() })
-    const polling = makePollingService({ readLatest: () => Effect.sync(() => { calls += 1; return snapshot }) },
+
+    const polling = makePollingService({ readLatest: () => Effect.sync(() => { calls += 1;
+
+ return snapshot }) },
       makeIngestionStorage(db, { workflowBudgetMs: 1000, leaseMs: 5000, minimumIntervalMs: 60_000 }),
       { workflowBudgetMs: 1000, finalizationBudgetMs: 200, freshnessThresholdSeconds: 180 })
+
     const app = createApp({ pollingLayer: Layer.succeed(PollingService, polling) })
     expect((await app.fetch(request(), environment)).status).toBe(200)
     snapshot = { ...snapshot, grid: { ...snapshot.grid, status: "offline", voltageV: 0, frequencyHz: 0 },
       measuredAt: new Date(now - 1000).toISOString(), fetchedAt: new Date(now).toISOString() }
+
     for (const expected of ["accepted", "replay"]) {
       await db.prepare(`UPDATE refresh_guards SET lease_until='1970-01-01T00:00:00.000Z',
         next_allowed_at='1970-01-01T00:00:00.000Z' WHERE station_id=?`).bind(id).run()
@@ -334,6 +369,7 @@ describe("refresh activation and real D1 integration", () => {
       expect(response.status).toBe(200)
       expect(await response.json()).toMatchObject({ data: { refresh: { outcome: expected } } })
     }
+
     expect((await app.fetch(request(), environment)).status).toBe(429)
     expect(calls).toBe(3)
     expect(await db.prepare("SELECT count(*) AS count FROM grid_events WHERE station_id=?")

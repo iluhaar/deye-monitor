@@ -7,12 +7,12 @@ import type { DeyeFailure } from "../errors/DeyeErrors"
  * adapter and conservative normalizer for opt-in finite ingestion; ordinary
  * API reads remain D1-only.
  */
-export interface DeyeServiceShape {
+export interface DeyeReader {
   readonly readLatest: (
     stationId: string,
   ) => Effect.Effect<TelemetrySnapshot, DeyeFailure>
 }
 
-export const DeyeService = Context.Service<DeyeServiceShape>(
+export const DeyeService = Context.Service<DeyeReader>(
   "deye-monitor/DeyeService",
 )

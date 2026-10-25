@@ -1,7 +1,7 @@
 import type { D1Database } from "@cloudflare/workers-types"
 import { Layer } from "effect"
 import type { DeyeConfig, DeyeRuntime } from "../deye/config"
-import { makeDeyeLayer } from "../deye/DeyeLive"
+import { deyeRawLayer } from "../deye/DeyeLive"
 import { normalizedDeyeLayer } from "../deye/NormalizedLive"
 import { pollingLayer } from "../services/PollingService"
 import { ingestionStorageLayer } from "../storage/IngestionLive"
@@ -20,7 +20,9 @@ export function ingestionLayer(
     policy.leaseMs <= policy.workflowBudgetMs + 2 * finalizationBudgetMs) {
     throw new Error("Invalid ingestion timing policy")
   }
-  const source = normalizedDeyeLayer.pipe(Layer.provide(makeDeyeLayer(config, runtime)))
+
+  const source = normalizedDeyeLayer.pipe(Layer.provide(deyeRawLayer(config, runtime)))
+
   return pollingLayer({ workflowBudgetMs: policy.workflowBudgetMs,
     finalizationBudgetMs, freshnessThresholdSeconds }).pipe(Layer.provide(Layer.merge(
       source, ingestionStorageLayer(db, policy),

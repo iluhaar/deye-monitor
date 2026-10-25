@@ -8,7 +8,7 @@ import {
 import { evaluateSnapshot } from "../src/domain/grid-status"
 
 const fetchedAt = "2026-10-24T14:15:30.000Z"
-const fixturePayload = fixture as DeyeDeviceLatestResponse
+const fixturePayload = fixture satisfies DeyeDeviceLatestResponse
 
 function copyFixture(): DeyeDeviceLatestResponse {
   return structuredClone(fixturePayload)
@@ -27,7 +27,9 @@ function withMeasurements(
   additions: readonly ReturnType<typeof measurement>[],
 ): DeyeDeviceLatestResponse {
   const device = payload.deviceDataList[0]
+
   if (device === undefined) throw new Error("fixture has no device")
+
   return {
     ...payload,
     deviceDataList: [
@@ -80,13 +82,16 @@ describe("Deye device/latest normalization", () => {
   it("keeps absent measurements null instead of zero-filling them", () => {
     const input = copyFixture()
     const device = input.deviceDataList[0]
+
     if (device === undefined) throw new Error("fixture has no device")
+
     const missing = new Set([
       "GridVoltageL1L2",
       "GridFrequency",
       "SOC",
       "TotalConsumptionPower",
     ])
+
     const payload: DeyeDeviceLatestResponse = {
       ...input,
       deviceDataList: [
@@ -136,13 +141,16 @@ describe("Deye device/latest normalization", () => {
   it("does not infer an outage from zero flow", () => {
     const input = copyFixture()
     const device = input.deviceDataList[0]
+
     if (device === undefined) throw new Error("fixture has no device")
+
     const zeroFlowKeys = new Set([
       "TotalGridPower",
       "ExternalCTPowerL1L2",
       "BatteryPower",
       "TotalConsumptionPower",
     ])
+
     const payload: DeyeDeviceLatestResponse = {
       ...input,
       deviceDataList: [
@@ -187,7 +195,9 @@ describe("Deye device/latest normalization", () => {
   it("rejects ambiguous millisecond-looking collection times", () => {
     const input = copyFixture()
     const device = input.deviceDataList[0]
+
     if (device === undefined) throw new Error("fixture has no device")
+
     const payload: DeyeDeviceLatestResponse = {
       ...input,
       deviceDataList: [
@@ -241,11 +251,14 @@ describe("Deye device/latest normalization", () => {
   ])("lets the existing evaluator reject $name", (testCase) => {
     const input = copyFixture()
     const device = input.deviceDataList[0]
+
     if (device === undefined) throw new Error("fixture has no device")
+
     const payload: DeyeDeviceLatestResponse = {
       ...input,
       deviceDataList: [{ ...device, collectionTime: testCase.collectionTime }],
     }
+
     const snapshot = normalizeDeyeDeviceLatest(payload, {
       stationId: "station-internal",
       fetchedAt: testCase.fetchedAt,
@@ -283,7 +296,9 @@ describe("Deye device/latest normalization", () => {
     "rejects a singleton explicitly typed %s device",
     (deviceType) => {
       const device = fixturePayload.deviceDataList[0]
+
       if (device === undefined) throw new Error("fixture has no device")
+
       const payload: DeyeDeviceLatestResponse = {
         ...fixturePayload,
         deviceDataList: [{ ...device, deviceType }],
@@ -300,7 +315,9 @@ describe("Deye device/latest normalization", () => {
 
   it("keeps deliberate compatibility for a singleton with omitted type", () => {
     const device = fixturePayload.deviceDataList[0]
+
     if (device === undefined) throw new Error("fixture has no device")
+
     const payload: DeyeDeviceLatestResponse = {
       ...fixturePayload,
       deviceDataList: [{ ...device, deviceType: undefined }],

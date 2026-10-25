@@ -25,10 +25,19 @@ Manual-refresh configuration and activation are in
 ```sh
 cd server
 npm ci
+npm run lint
 npm run typecheck
 npm test
 npm run build
 ```
+
+Linting uses Oxlint with correctness rules and TypeScript/Vitest plugins;
+warnings fail the lint check. All checks above can run locally without GitHub
+Actions.
+
+The vendored [anti-slop](https://github.com/dmmulroy/anti-slop) generic and Effect
+rules also run through `npm run lint`, with all rules enabled as errors. Source
+and revision are recorded in `server/tools/oxlint/anti-slop/UPSTREAM.md`.
 
 The local D1 database can be initialized with:
 

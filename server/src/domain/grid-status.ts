@@ -1,3 +1,4 @@
+import { Schema } from "effect"
 import type {
   EvaluatedTelemetrySnapshot,
   FreshnessInfo,
@@ -15,9 +16,12 @@ export type FreshnessReason =
   | "stale"
   | "fresh"
 
-export interface FreshnessEvaluation extends FreshnessInfo {
-  readonly reason: FreshnessReason
-}
+type UnavailableFreshnessReason = Exclude<FreshnessReason, "fresh" | "stale">
+
+export type FreshnessEvaluation =
+  | { readonly status: "unavailable"; readonly ageSeconds: null; readonly reason: UnavailableFreshnessReason }
+  | { readonly status: "fresh"; readonly ageSeconds: number; readonly reason: "fresh" }
+  | { readonly status: "stale"; readonly ageSeconds: number; readonly reason: "stale" }
 
 /**
  * Only evidence names that a future, verified normalizer may explicitly emit
@@ -41,12 +45,13 @@ export function hasVerifiedGridEvidence(
 }
 
 function timestampMillis(value: string | null | undefined): number | null {
-  if (typeof value !== "string" || value.trim() === "") return null
+  if (!Schema.is(Schema.String)(value) || value.trim() === "") return null
   const parsed = Date.parse(value)
+
   return Number.isFinite(parsed) ? parsed : null
 }
 
-function unavailable(reason: FreshnessReason): FreshnessEvaluation {
+function unavailable(reason: UnavailableFreshnessReason): FreshnessEvaluation {
   return { status: "unavailable", ageSeconds: null, reason }
 }
 
@@ -59,6 +64,7 @@ export function evaluateFreshness(
 
   const measuredMs = timestampMillis(snapshot.measuredAt)
   const fetchedMs = timestampMillis(snapshot.fetchedAt)
+
   if (measuredMs === null || fetchedMs === null) {
     return unavailable(
       snapshot.measuredAt === null || snapshot.measuredAt === undefined
@@ -73,6 +79,7 @@ export function evaluateFreshness(
   if (measuredMs > nowMs || fetchedMs > nowMs) {
     return unavailable("future_timestamp")
   }
+
   if (measuredMs > fetchedMs) {
     return unavailable("inconsistent_timestamp")
   }
@@ -81,11 +88,14 @@ export function evaluateFreshness(
     Number.isFinite(thresholdSeconds) && thresholdSeconds >= 0
       ? thresholdSeconds
       : DEFAULT_FRESHNESS_THRESHOLD_SECONDS
+
   const ageSecondsExact = Math.max(0, (nowMs - measuredMs) / 1000)
   const ageSeconds = Math.floor(ageSecondsExact)
+
   if (ageSecondsExact > safeThreshold) {
     return { status: "stale", ageSeconds, reason: "stale" }
   }
+
   return { status: "fresh", ageSeconds, reason: "fresh" }
 }
 
@@ -99,10 +109,12 @@ export function evaluateSnapshot(
   thresholdSeconds = DEFAULT_FRESHNESS_THRESHOLD_SECONDS,
 ): EvaluatedTelemetrySnapshot {
   const freshness = evaluateFreshness(snapshot, nowMs, thresholdSeconds)
+
   if (snapshot.collectionAvailable === false) {
     return { ...snapshot, grid: { ...snapshot.grid, status: "unknown" },
       freshness: { status: "unavailable", ageSeconds: freshness.ageSeconds } }
   }
+
   const status: TelemetrySnapshot["grid"]["status"] =
     freshness.status === "fresh" && hasVerifiedGridEvidence(snapshot.grid)
       ? snapshot.grid.status
@@ -117,10 +129,11 @@ export function evaluateSnapshot(
 
 function toFreshnessInfo(evaluation: FreshnessEvaluation): FreshnessInfo {
   const status: FreshnessStatus = evaluation.status
+
   return { status, ageSeconds: evaluation.ageSeconds }
 }
 
-export function unavailableSnapshot(): {
+interface UnavailableTelemetry {
   readonly grid: {
     readonly status: "unknown"
     readonly evidence: readonly string[]
@@ -130,7 +143,9 @@ export function unavailableSnapshot(): {
     readonly powerW: null
   }
   readonly freshness: FreshnessInfo
-} {
+}
+
+export function unavailableSnapshot(): UnavailableTelemetry {
   return {
     grid: {
       status: "unknown",

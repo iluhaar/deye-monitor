@@ -1,3 +1,4 @@
+import { Schema } from "effect"
 import type { DeyeLatestRequest } from "./types"
 
 /**
@@ -79,9 +80,7 @@ export interface ResolvedDeyeConfig {
   readonly tokenSafetyMarginSeconds: number
 }
 
-function nonEmpty(value: unknown): value is string {
-  return typeof value === "string" && value.trim() !== ""
-}
+const nonEmpty = Schema.is(Schema.String.pipe(Schema.check(Schema.isPattern(/\S/u))))
 
 function selectedCredential(config: DeyeConfig): DeyeCredentials {
   return { ...config, ...config.credentials }
@@ -116,11 +115,13 @@ export function resolveDeyeConfig(config: DeyeConfig | undefined): ResolvedDeyeC
   if (config === undefined || !nonEmpty(config.baseUrl)) return null
 
   let baseUrl: URL
+
   try {
     baseUrl = new URL(config.baseUrl)
   } catch {
     return null
   }
+
   // Credentials are sent to the token path, so a non-TLS endpoint is never a
   // valid live configuration. Tests can replace fetch without weakening this
   // production invariant.
@@ -139,6 +140,7 @@ export function resolveDeyeConfig(config: DeyeConfig | undefined): ResolvedDeyeC
   const appId = source.appId?.trim()
   const appSecret = source.appSecret?.trim()
   const password = (source.passwordHash ?? source.password)?.trim()
+
   if (!nonEmpty(appId) || !nonEmpty(appSecret) || !nonEmpty(password)) return null
 
   const identities = [
@@ -156,31 +158,40 @@ export function resolveDeyeConfig(config: DeyeConfig | undefined): ResolvedDeyeC
       ? ({ kind: "username", value: source.username.trim() } as const)
       : null,
   ].filter((identity): identity is NonNullable<typeof identity> => identity !== null)
+
   if (identities.length !== 1) return null
 
   const configuredLatest = config.latest
   const deviceSn = configuredLatest?.deviceSn.trim() || config.deviceSn?.trim()
   const deviceType = configuredLatest?.deviceType?.trim() || config.deviceType?.trim()
-  const defaultLatest = nonEmpty(deviceSn)
-    ? { deviceSn, ...(nonEmpty(deviceType) ? { deviceType } : {}) }
-    : null
+
+  let defaultLatest: DeyeLatestRequest | null = null
+
+  if (nonEmpty(deviceSn)) {
+    defaultLatest = nonEmpty(deviceType) ? { deviceSn, deviceType } : { deviceSn }
+  }
 
   const timeoutMs = boundedPositive(config.timeoutMs, DEFAULT_TIMEOUT_MS, 60_000)
+
   const maxResponseBytes = boundedPositive(
     config.maxResponseBytes,
     DEFAULT_MAX_RESPONSE_BYTES,
     MAX_RESPONSE_BYTES,
   )
+
   const maxRetries = boundedNonNegative(config.maxRetries, DEFAULT_MAX_RETRIES, MAX_RETRIES)
+
   const retryBaseDelayMs = boundedNonNegative(
     config.retryBaseDelayMs,
     DEFAULT_RETRY_BASE_DELAY_MS,
     MAX_RETRY_DELAY_MS,
   )
+
   const retryMaxDelayMs = Math.max(
     retryBaseDelayMs,
     boundedNonNegative(config.retryMaxDelayMs, DEFAULT_RETRY_MAX_DELAY_MS, MAX_RETRY_DELAY_MS),
   )
+
   const tokenSafetyMarginSeconds = boundedNonNegative(
     config.tokenSafetyMarginSeconds,
     DEFAULT_TOKEN_SAFETY_MARGIN_SECONDS,

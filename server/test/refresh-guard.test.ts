@@ -1,12 +1,10 @@
 import { applyD1Migrations, env } from "cloudflare:test"
-import type { D1Database } from "@cloudflare/workers-types"
-import type { D1Migration } from "@cloudflare/vitest-plugin"
 import { Effect } from "effect"
 import { beforeAll, describe, expect, it } from "vitest"
-import { makeRefreshGuard, observationKey } from "../src/storage/RefreshGuard"
+import { makeRefreshGuard, observationKey, RefreshGuardError } from "../src/storage/RefreshGuard"
 import type { RefreshLease } from "../src/storage/RefreshGuard"
 
-const bindings = env as unknown as { DB: D1Database; TEST_MIGRATIONS: D1Migration[] }
+const bindings = env
 const db = bindings.DB
 const policy = { workflowBudgetMs: 90_000, leaseMs: 120_000, minimumIntervalMs: 180_000 }
 const observedAt = "2026-01-01T00:00:00.000Z"
@@ -21,12 +19,15 @@ async function station(): Promise<string> {
   const id = crypto.randomUUID()
   await db.prepare(`INSERT INTO stations (id, source, mapping_revision, created_at, updated_at)
     VALUES (?, 'deye-cloud', 'test', ?, ?)`).bind(id, observedAt, observedAt).run()
+
   return id
 }
 
 async function acquire(stationId: string): Promise<RefreshLease> {
   const result = await Effect.runPromise(guard.acquire(stationId))
+
   if (result.status !== "acquired") throw new Error(`unexpected ${result.status}`)
+
   return result.lease
 }
 
@@ -43,6 +44,7 @@ function writePoll(stationId: string, id = crypto.randomUUID()) {
 async function pollCount(stationId: string) {
   const row = await db.prepare("SELECT count(*) AS count FROM poll_runs WHERE station_id = ?")
     .bind(stationId).first<{ count: number }>()
+
   return row?.count
 }
 
@@ -67,14 +69,17 @@ describe("durable refresh protocol on real D1", () => {
   it("applies both migrations and permits only one concurrent acquisition across instances", async () => {
     const id = await station()
     const other = makeRefreshGuard(db, policy)
+
     const results = await Promise.all([
       Effect.runPromise(guard.acquire(id)), Effect.runPromise(other.acquire(id)),
     ])
+
     expect(results.map((r) => r.status).sort()).toEqual(["acquired", "busy"])
     const winner = results.find((r) => r.status === "acquired")!
     expect(winner.lease.epoch).toBe(1)
     expect(winner.lease.owner).toMatch(/^[0-9a-f-]{36}$/)
     const busy = results.find((r) => r.status === "busy")!
+
     if (busy.status === "acquired") throw new Error("expected busy")
     expect(busy.retryAfterSeconds).toBeGreaterThan(0)
     expect(busy.retryAfterSeconds).toBeLessThanOrEqual(180)
@@ -105,7 +110,7 @@ describe("durable refresh protocol on real D1", () => {
     expect(second.epoch).toBe(first.epoch + 1)
     expect(second.owner).not.toBe(first.owner)
     await expect(Effect.runPromise(guard.commit(first, [writePoll(id)], observedAt)))
-      .rejects.toMatchObject({ _tag: "RefreshGuardError", operation: "commit" })
+      .rejects.toMatchObject(new RefreshGuardError({ operation: "commit" }))
     expect(await Effect.runPromise(guard.release(first))).toBe(false)
     expect(await pollCount(id)).toBe(0)
     await Effect.runPromise(guard.commit(second, [writePoll(id)], observedAt))
@@ -124,11 +129,13 @@ describe("durable refresh protocol on real D1", () => {
   it("rejects forged owner/epoch tokens", async () => {
     const id = await station()
     const lease = await acquire(id)
+
     for (const forged of [{ ...lease, owner: "other" }, { ...lease, epoch: lease.epoch + 1 }]) {
       await expect(Effect.runPromise(guard.commit(forged, [writePoll(id)], observedAt)))
         .rejects.toMatchObject({ operation: "commit" })
       expect(await Effect.runPromise(guard.release(forged))).toBe(false)
     }
+
     expect(await pollCount(id)).toBe(0)
   })
 
@@ -136,13 +143,17 @@ describe("durable refresh protocol on real D1", () => {
     const id = await station()
     const lease = await acquire(id)
     await Effect.runPromise(guard.commit(lease, [writePoll(id)], newerAt))
+
     for (const time of [newerAt, observedAt]) {
       await expect(Effect.runPromise(guard.commit(lease, [writePoll(id)], time)))
         .rejects.toMatchObject({ operation: "commit" })
     }
+
     expect(await pollCount(id)).toBe(1)
+
     const watermark = await db.prepare(`SELECT last_observed_at, last_observation_key
       FROM refresh_guards WHERE station_id = ?`).bind(id).first()
+
     expect(watermark).toEqual({
       last_observed_at: newerAt, last_observation_key: observationKey(id, newerAt),
     })
@@ -157,10 +168,12 @@ describe("durable refresh protocol on real D1", () => {
   it("serializes concurrent commits of the same observation", async () => {
     const id = await station()
     const lease = await acquire(id)
+
     const results = await Promise.allSettled([
       Effect.runPromise(guard.commit(lease, [writePoll(id)], observedAt)),
       Effect.runPromise(guard.commit(lease, [writePoll(id)], observedAt)),
     ])
+
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1)
     expect(await pollCount(id)).toBe(1)
   })
@@ -215,8 +228,10 @@ describe("durable refresh protocol on real D1", () => {
   it("rolls the entire batch back if ownership is lost during its statements", async () => {
     const id = await station()
     const lease = await acquire(id)
+
     const loseLease = db.prepare("UPDATE refresh_guards SET lease_until = ? WHERE station_id = ?")
       .bind(observedAt, id)
+
     await expect(Effect.runPromise(guard.commit(lease, [writePoll(id), loseLease], observedAt)))
       .rejects.toMatchObject({ operation: "commit" })
     expect(await pollCount(id)).toBe(0)
@@ -235,14 +250,16 @@ describe("durable refresh protocol on real D1", () => {
 
   it("fails closed for invalid budgets or missing stations without disclosing SQL", async () => {
     const id = await station()
+
     for (const bad of [
       { ...policy, leaseMs: policy.workflowBudgetMs },
       { ...policy, minimumIntervalMs: 0 },
       { ...policy, leaseMs: NaN },
     ]) {
       await expect(Effect.runPromise(makeRefreshGuard(db, bad).acquire(id)))
-        .rejects.toMatchObject({ _tag: "RefreshGuardError", operation: "acquire" })
+        .rejects.toMatchObject(new RefreshGuardError({ operation: "acquire" }))
     }
+
     await expect(Effect.runPromise(guard.acquire("missing-secret-station")))
       .rejects.not.toThrow(/missing-secret-station|INSERT|FOREIGN KEY/)
   })

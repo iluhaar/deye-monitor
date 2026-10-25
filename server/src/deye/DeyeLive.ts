@@ -1,4 +1,4 @@
-import { Effect, Layer } from "effect"
+import { Effect, Layer, Schema } from "effect"
 import {
   DeyeAuthError,
   DeyeNotConfiguredError,
@@ -14,8 +14,10 @@ import {
   type DeyeRuntime,
   type ResolvedDeyeConfig,
 } from "./config"
+// DeyeRequestClient is a Promise-based HTTP helper, not an Effect service.
+// oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports
 import { makeDeyeRequestClient } from "./DeyeClient"
-import { DeyeRawService, type DeyeRawServiceShape } from "./DeyeRawService"
+import { DeyeRawService, type DeyeRawReader } from "./DeyeRawService"
 import { decodeLatestResponse, decodeTokenResponse } from "./schemas"
 import type { DeyeLatest, DeyeLatestRequest } from "./types"
 
@@ -34,6 +36,7 @@ interface AuthenticationFlight {
 
 function safeNow(now: () => number): number {
   const value = now()
+
   return Number.isFinite(value) ? value : Date.now()
 }
 
@@ -41,17 +44,18 @@ function asIsoTimestamp(now: () => number): string {
   return new Date(safeNow(now)).toISOString()
 }
 
-function asDeyeFailure(error: unknown): DeyeFailure {
+function asDeyeFailure(cause: unknown): DeyeFailure {
   if (
-    error instanceof DeyeNotConfiguredError ||
-    error instanceof DeyeAuthError ||
-    error instanceof DeyeRateLimitError ||
-    error instanceof DeyeSchemaError ||
-    error instanceof DeyeTimeoutError ||
-    error instanceof DeyeUnavailableError
+    cause instanceof DeyeNotConfiguredError ||
+    cause instanceof DeyeAuthError ||
+    cause instanceof DeyeRateLimitError ||
+    cause instanceof DeyeSchemaError ||
+    cause instanceof DeyeTimeoutError ||
+    cause instanceof DeyeUnavailableError
   ) {
-    return error
+    return cause
   }
+
   return new DeyeUnavailableError({
     operation: "device_latest",
     status: null,
@@ -59,26 +63,48 @@ function asDeyeFailure(error: unknown): DeyeFailure {
   })
 }
 
-function credentialBody(config: ResolvedDeyeConfig): Record<string, unknown> {
-  const body: Record<string, unknown> = {
+interface DeyeTokenRequestBody {
+  appSecret: string
+  password: string
+  email?: string
+  username?: string
+  mobile?: string
+  countryCode?: string
+  companyId?: string | number
+}
+
+interface DeyeLatestRequestBody {
+  deviceList: string[]
+  deviceType?: string
+}
+
+function credentialBody(config: ResolvedDeyeConfig): DeyeTokenRequestBody {
+  const body: DeyeTokenRequestBody = {
     appSecret: config.credentials.appSecret,
     password: config.credentials.password,
   }
+
   const identity = config.credentials.identity
+
   if (identity.kind === "email") body.email = identity.value
+
   if (identity.kind === "username") body.username = identity.value
+
   if (identity.kind === "mobile") {
     body.mobile = identity.value
     body.countryCode = identity.countryCode
   }
+
   if (config.credentials.companyId !== undefined) {
     body.companyId = config.credentials.companyId
   }
+
   return body
 }
 
 function normalizeAuthorization(accessToken: string): string {
   const token = accessToken.replace(/^Bearer\s+/iu, "").trim()
+
   return `Bearer ${token}`
 }
 
@@ -86,24 +112,22 @@ function resolveLatestRequest(
   input: DeyeLatestRequest | string,
   defaultLatest: DeyeLatestRequest | null,
 ): DeyeLatestRequest | null {
-  if (typeof input === "string") {
+  if (Schema.is(Schema.String)(input)) {
     const deviceSn = input.trim()
+
     if (deviceSn === "") return defaultLatest
-    return {
-      deviceSn,
-      ...(defaultLatest?.deviceType === undefined
-        ? {}
-        : { deviceType: defaultLatest.deviceType }),
-    }
+
+    return defaultLatest?.deviceType === undefined
+      ? { deviceSn }
+      : { deviceSn, deviceType: defaultLatest.deviceType }
   }
 
   const deviceSn = input.deviceSn.trim()
+
   if (deviceSn === "") return defaultLatest
   const deviceType = input.deviceType?.trim() || defaultLatest?.deviceType
-  return {
-    deviceSn,
-    ...(deviceType === undefined ? {} : { deviceType }),
-  }
+
+  return deviceType === undefined ? { deviceSn } : { deviceSn, deviceType }
 }
 
 /**
@@ -115,7 +139,7 @@ function resolveLatestRequest(
 export function makeDeyeLive(
   config: DeyeConfig | undefined,
   runtime: DeyeRuntime = {},
-): DeyeRawServiceShape {
+): DeyeRawReader {
   const resolvedConfig = resolveDeyeConfig(config)
   const now = runtime.now ?? Date.now
 
@@ -133,11 +157,13 @@ export function makeDeyeLive(
   function cancellationError(): Error {
     const error = new Error("deye operation cancelled")
     error.name = "AbortError"
+
     return error
   }
 
   async function authenticate(signal: AbortSignal): Promise<CachedToken> {
     const path = `/v1.0/account/token?appId=${encodeURIComponent(resolved.credentials.appId)}`
+
     const responsePromise = client.postJson({
       operation: "token",
       path,
@@ -145,9 +171,11 @@ export function makeDeyeLive(
       decode: decodeTokenResponse,
       signal,
     })
+
     void responsePromise.catch(() => undefined)
     const response = await responsePromise
     const issuedAtMs = safeNow(now)
+
     const validUntilMs =
       issuedAtMs +
       Math.max(
@@ -155,6 +183,7 @@ export function makeDeyeLive(
         response.expiresInSeconds - resolved.tokenSafetyMarginSeconds,
       ) *
         1000
+
     return {
       authorization: normalizeAuthorization(response.accessToken),
       validUntilMs,
@@ -163,6 +192,7 @@ export function makeDeyeLive(
 
   function releaseAuthenticationSubscriber(flight: AuthenticationFlight): void {
     flight.subscribers -= 1
+
     if (flight.subscribers === 0 && !flight.settled) {
       // The shared request has no remaining owners. An implementation that
       // ignores AbortSignal may still resolve later, so its completion handler
@@ -180,6 +210,7 @@ export function makeDeyeLive(
 
     flight.subscribers += 1
     let released = false
+
     const release = (): void => {
       if (released) return
       released = true
@@ -187,27 +218,35 @@ export function makeDeyeLive(
     }
 
     let resolveAbort!: (error: Error) => void
+
     const aborted = new Promise<Error>((resolve) => {
       resolveAbort = resolve
     })
+
     const onAbort = (): void => {
       release()
       resolveAbort(cancellationError())
     }
+
     signal.addEventListener("abort", onAbort, { once: true })
+
     if (signal.aborted) onAbort()
 
     void flight.promise.catch(() => undefined)
+
     const result = Promise.race([flight.promise, aborted])
       .then((value) => {
         if (value instanceof Error) throw value
+
         return value
       })
       .finally(() => {
         signal.removeEventListener("abort", onAbort)
         release()
       })
+
     void result.catch(() => undefined)
+
     return result
   }
 
@@ -221,15 +260,18 @@ export function makeDeyeLive(
           if (flight.subscribers > 0 && !flight.controller.signal.aborted) {
             cachedToken = token
           }
+
           return token
         })
         .finally(() => {
           flight.settled = true
+
           if (authenticationInFlight === flight) authenticationInFlight = null
         }),
       subscribers: 0,
       settled: false,
     }
+
     return flight
   }
 
@@ -238,22 +280,28 @@ export function makeDeyeLive(
     signal: AbortSignal,
   ): Promise<CachedToken> {
     if (signal.aborted) return Promise.reject(cancellationError())
+
     if (forceReauthentication) cachedToken = null
+
     if (!forceReauthentication && cachedToken !== null) {
       if (safeNow(now) < cachedToken.validUntilMs) return Promise.resolve(cachedToken)
       cachedToken = null
     }
+
     if (authenticationInFlight === null) {
       authenticationInFlight = createAuthenticationFlight()
     }
+
     return subscribeToAuthentication(authenticationInFlight, signal)
   }
 
   function invalidateToken(token: CachedToken): boolean {
     if (cachedToken === token || cachedToken?.authorization === token.authorization) {
       cachedToken = null
+
       return true
     }
+
     // Another concurrent request has already installed a newer token. Do not
     // invalidate that replacement or trigger an unnecessary second reauth.
     return false
@@ -264,19 +312,24 @@ export function makeDeyeLive(
     signal: AbortSignal,
   ): Promise<DeyeLatest> {
     const request = resolveLatestRequest(input, resolved.defaultLatest)
+
     if (request === null) throw new DeyeNotConfiguredError()
 
     let reauthenticationCount = 0
+
     while (true) {
       // Authentication failures from this call are intentionally outside the
       // latest-data retry loop; a failed credential login cannot be fixed by
       // recursively authenticating forever.
       const token = await acquireToken(false, signal)
+
       try {
-        const body = {
+        const body: DeyeLatestRequestBody = {
           deviceList: [request.deviceSn],
-          ...(request.deviceType === undefined ? {} : { deviceType: request.deviceType }),
         }
+
+        if (request.deviceType !== undefined) body.deviceType = request.deviceType
+
         return await client.postJson({
           operation: "device_latest",
           path: "/v1.0/device/latest",
@@ -287,8 +340,10 @@ export function makeDeyeLive(
         })
       } catch (error) {
         if (signal.aborted) throw cancellationError()
+
         if (error instanceof DeyeAuthError) {
           const invalidated = invalidateToken(token)
+
           if (reauthenticationCount >= 1) throw error
           reauthenticationCount += 1
           // Deye publishes no refresh operation. Re-authentication uses the
@@ -297,6 +352,7 @@ export function makeDeyeLive(
           await acquireToken(invalidated, signal)
           continue
         }
+
         throw error
       }
     }
@@ -324,6 +380,7 @@ export function makeDeyeLive(
         try: (signal) => {
           const result = readLatestAsync(input, signal)
           void result.catch(() => undefined)
+
           return result
         },
         catch: asDeyeFailure,
@@ -335,7 +392,7 @@ export function makeDeyeLive(
 export function makeDeyeLayer(
   config: DeyeConfig | undefined,
   runtime: DeyeRuntime = {},
-): Layer.Layer<DeyeRawServiceShape> {
+): Layer.Layer<DeyeRawReader> {
   return Layer.succeed(DeyeRawService, makeDeyeLive(config, runtime))
 }
 

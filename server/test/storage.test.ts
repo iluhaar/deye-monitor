@@ -1,9 +1,10 @@
 import type { D1Database } from "@cloudflare/workers-types"
 import { Effect } from "effect"
-import { describe, expect, it } from "vitest"
-import { makeD1Storage } from "../src/storage/D1Live"
+import { describe, expect, it, vi } from "vitest"
+import { makeD1Storage, type EventRow, type SnapshotRow } from "../src/storage/D1Live"
+import { StorageError } from "../src/errors/StorageErrors"
 
-function snapshotRow(overrides: Record<string, unknown> = {}) {
+function snapshotRow(overrides: Partial<SnapshotRow> = {}): SnapshotRow {
   return {
     source: "deye-cloud",
     station_id: "station-1",
@@ -24,7 +25,7 @@ function snapshotRow(overrides: Record<string, unknown> = {}) {
   }
 }
 
-function eventRow(id: string, observedAt: string) {
+function eventRow(id: string, observedAt: string): EventRow {
   return {
     id,
     station_id: "station-1",
@@ -37,24 +38,54 @@ function eventRow(id: string, observedAt: string) {
   }
 }
 
-function database(firstValue: unknown, eventRows: readonly unknown[] = []) {
-  const prepared: Array<{ sql: string; values: unknown[] }> = []
-  const db = {
-    prepare(sql: string) {
-      const state = { sql, values: [] as unknown[] }
-      prepared.push(state)
-      return {
-        bind(...values: unknown[]) {
-          state.values = values
-          return {
-            first: async <T>() => firstValue as T,
-            all: async <T>() => ({ results: eventRows as T[] }),
-          }
-        },
-      }
-    },
-  }
-  return { db: db as unknown as D1Database, prepared }
+interface PreparedQuery {
+  sql: string
+  values: Array<string | number | null>
+}
+
+type SqlValue = string | number | null
+
+type FirstMock = () => Promise<SnapshotRow | null>
+
+type AllMock = () => Promise<{ results: EventRow[] }>
+
+type BindMock = (...values: SqlValue[]) => {
+  first: FirstMock
+  all: AllMock
+}
+
+type PrepareMock = (sql: string) => { bind: BindMock }
+
+interface D1DatabaseStub {
+  prepare: PrepareMock
+}
+
+function database(firstValue: SnapshotRow | null, eventRows: readonly EventRow[] = []) {
+  const prepared: PreparedQuery[] = []
+
+  const prepare = vi.fn<PrepareMock>((sql) => {
+    const state: PreparedQuery = { sql, values: [] }
+    prepared.push(state)
+
+    const bind = vi.fn<BindMock>((...values) => {
+      state.values = values
+
+      const first = vi.fn<FirstMock>(async () => firstValue)
+
+      const all = vi.fn<AllMock>(async () => ({ results: [...eventRows] }))
+
+      return { first, all }
+    })
+
+    return { bind }
+  })
+
+  const stub: D1DatabaseStub = { prepare }
+
+  // SAFETY: This test double implements every D1 method exercised by makeD1Storage.
+  const db = stub as D1Database
+
+  return { db, prepared }
 }
 
 describe("D1 storage boundary", () => {
@@ -68,7 +99,7 @@ describe("D1 storage boundary", () => {
 
     await expect(
       Effect.runPromise(storage.getLatestSnapshot("station-1")),
-    ).rejects.toMatchObject({ _tag: "StorageError", operation: "read_snapshot" })
+    ).rejects.toMatchObject(new StorageError({ operation: "read_snapshot" }))
   })
 
   it.each([-1, 101, Number.POSITIVE_INFINITY])(
@@ -79,7 +110,7 @@ describe("D1 storage boundary", () => {
 
       await expect(
         Effect.runPromise(storage.getLatestSnapshot("station-1")),
-      ).rejects.toMatchObject({ _tag: "StorageError", operation: "read_snapshot" })
+      ).rejects.toMatchObject(new StorageError({ operation: "read_snapshot" }))
     },
   )
 
@@ -90,6 +121,7 @@ describe("D1 storage boundary", () => {
     const snapshot = await Effect.runPromise(
       storage.getLatestSnapshot("station-1"),
     )
+
     expect(snapshot?.battery.socPercent).toBeNull()
   })
 
@@ -98,35 +130,36 @@ describe("D1 storage boundary", () => {
     const storage = makeD1Storage(db)
 
     const result = storage.getLatestSnapshot("station-1")
-    await expect(Effect.runPromise(result)).rejects.toMatchObject({
-      _tag: "StorageError",
+    await expect(Effect.runPromise(result)).rejects.toMatchObject(new StorageError({
       operation: "read_snapshot",
-    })
+    }))
     await expect(Effect.runPromise(result)).rejects.not.toMatchObject({
       message: expect.stringContaining("not-json"),
     })
   })
 
   it("maps driver failures to a typed, non-sensitive storage error", async () => {
-    const db = {
-      prepare() {
-        return {
-          bind() {
-            return {
-              first: async () => {
-                throw new Error("SELECT token=secret")
-              },
-            }
-          },
-        }
-      },
-    } as unknown as D1Database
+    const stub: D1DatabaseStub = {
+      prepare: vi.fn<PrepareMock>(() => ({
+        bind: vi.fn<BindMock>(() => ({
+          first: vi.fn<FirstMock>(async () => {
+            throw new Error("SELECT token=secret")
+          }),
+          all: vi.fn<AllMock>(async () => ({
+            results: [],
+          })),
+        })),
+      })),
+    }
+
+    // SAFETY: This test double implements every D1 method exercised by makeD1Storage.
+    const db = stub as D1Database
+
     const storage = makeD1Storage(db)
 
-    await expect(Effect.runPromise(storage.getLatestSnapshot("station-1"))).rejects.toMatchObject({
-      _tag: "StorageError",
+    await expect(Effect.runPromise(storage.getLatestSnapshot("station-1"))).rejects.toMatchObject(new StorageError({
       operation: "read_snapshot",
-    })
+    }))
     await expect(Effect.runPromise(storage.getLatestSnapshot("station-1"))).rejects.not.toMatchObject({
       message: expect.stringContaining("token=secret"),
     })
@@ -134,10 +167,12 @@ describe("D1 storage boundary", () => {
 
   it("uses a deterministic id tie-breaker for event pagination", async () => {
     const sameTime = "2026-10-24T11:00:00.000Z"
+
     const { db, prepared } = database(null, [
       eventRow("event-b", sameTime),
       eventRow("event-a", sameTime),
     ])
+
     const storage = makeD1Storage(db)
 
     const page = await Effect.runPromise(
@@ -161,6 +196,7 @@ describe("D1 storage boundary", () => {
     const { db } = database(null, [
       { ...eventRow("event-1", "2026-10-24T11:00:00.000Z"), evidence_json: "not-json" },
     ])
+
     const storage = makeD1Storage(db)
 
     await expect(
@@ -173,7 +209,7 @@ describe("D1 storage boundary", () => {
           to: null,
         }),
       ),
-    ).rejects.toMatchObject({ _tag: "StorageError", operation: "read_events" })
+    ).rejects.toMatchObject(new StorageError({ operation: "read_events" }))
   })
 
   it.each([
@@ -187,7 +223,7 @@ describe("D1 storage boundary", () => {
         ...eventRow("event-1", "2026-10-24T11:00:00.000Z"),
         previous_status: "offline",
         previous_observed_at: "2026-10-24T10:00:00Z",
-      },
+      } satisfies EventRow,
     },
   ])("rejects noncanonical persisted $name timestamps", async ({ row }) => {
     const { db } = database(null, [row])
@@ -203,7 +239,7 @@ describe("D1 storage boundary", () => {
           to: null,
         }),
       ),
-    ).rejects.toMatchObject({ _tag: "StorageError", operation: "read_events" })
+    ).rejects.toMatchObject(new StorageError({ operation: "read_events" }))
   })
 
   it("rejects incoherent prior event fields", async () => {
@@ -214,6 +250,7 @@ describe("D1 storage boundary", () => {
         previous_observed_at: "2026-10-24T12:00:00.000Z",
       },
     ])
+
     const storage = makeD1Storage(db)
 
     await expect(
@@ -226,6 +263,6 @@ describe("D1 storage boundary", () => {
           to: null,
         }),
       ),
-    ).rejects.toMatchObject({ _tag: "StorageError", operation: "read_events" })
+    ).rejects.toMatchObject(new StorageError({ operation: "read_events" }))
   })
 })

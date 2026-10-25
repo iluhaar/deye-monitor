@@ -1,11 +1,11 @@
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import { describe, expect, it } from "vitest"
 import { createApp } from "../src/api/app"
 import { makeSnapshot, NOW, authenticatedEnv, authorizationHeaders, emptyStorage, storageLayer } from "./helpers"
-import type { EventQuery, StorageServiceShape } from "../src/services/StorageService"
+import type { EventQuery, TelemetryStore } from "../src/services/StorageService"
 
-async function readJson(response: Response): Promise<Record<string, any>> {
-  return (await response.json()) as Record<string, any>
+async function readJson(response: Response) {
+  return Schema.decodeUnknownSync(Schema.JsonObject)(await response.json())
 }
 
 function request(path: string, headers?: HeadersInit) {
@@ -28,6 +28,7 @@ describe("authenticated read API", () => {
 
   it("fails closed when the bearer secret is not configured", async () => {
     const app = createApp({ storageLayer: emptyStorage(), now: () => NOW })
+
     const response = await app.fetch(
       request("/api/v1/status", authorizationHeaders()),
       { STATION_ID: "station-1" },
@@ -38,10 +39,12 @@ describe("authenticated read API", () => {
 
   it("returns a sanitized error when the D1 binding is missing", async () => {
     const app = createApp({ now: () => NOW })
+
     const response = await app.fetch(
       request("/api/v1/status", authorizationHeaders()),
       authenticatedEnv,
     )
+
     const body = await readJson(response)
 
     expect(response.status).toBe(503)
@@ -54,16 +57,18 @@ describe("authenticated read API", () => {
 
   it("returns unknown and unavailable when no snapshot exists", async () => {
     const app = createApp({ storageLayer: emptyStorage(), now: () => NOW })
+
     const response = await app.fetch(
       request("/api/v1/status", authorizationHeaders()),
       authenticatedEnv,
     )
+
     const body = await readJson(response)
 
     expect(response.status).toBe(200)
     expect(body.ok).toBe(true)
-    expect(body.data.grid.status).toBe("unknown")
-    expect(body.data.freshness).toEqual({ status: "unavailable", ageSeconds: null })
+    expect(body).toHaveProperty("data.grid.status", "unknown")
+    expect(body).toHaveProperty("data.freshness", { status: "unavailable", ageSeconds: null })
   })
 
   it("re-evaluates freshness on every read", async () => {
@@ -100,37 +105,44 @@ describe("authenticated read API", () => {
         storageLayer: emptyStorage(testCase.snapshot),
         now: () => NOW,
       })
+
       const response = await app.fetch(
         request("/api/v1/status", authorizationHeaders()),
         authenticatedEnv,
       )
+
       const body = await readJson(response)
 
-      expect(body.data.grid.status, testCase.name).toBe(testCase.expected)
+      expect(body, testCase.name).toHaveProperty("data.grid.status", testCase.expected)
     }
   })
 
   it("uses a substituted Effect service rather than contacting D1", async () => {
     let called = false
-    const fakeStorage: StorageServiceShape = {
+
+    const fakeStorage: TelemetryStore = {
       getLatestSnapshot: (stationId) => {
         called = stationId === "station-1"
+
         return Effect.succeed(makeSnapshot())
       },
       listEvents: () => Effect.succeed({ events: [], nextCursor: null }),
     }
+
     const app = createApp({
       storageLayer: storageLayer(fakeStorage),
       now: () => NOW,
     })
+
     const response = await app.fetch(
       request("/api/v1/status", authorizationHeaders()),
       authenticatedEnv,
     )
+
     const body = await readJson(response)
 
     expect(response.status).toBe(200)
-    expect(body.data.grid.status).toBe("online")
+    expect(body).toHaveProperty("data.grid.status", "online")
     expect(called).toBe(true)
   })
 
@@ -139,10 +151,12 @@ describe("authenticated read API", () => {
       storageLayer: emptyStorage(makeSnapshot()),
       now: () => NOW,
     })
+
     const response = await app.fetch(
       request("/api/v1/health", authorizationHeaders()),
       authenticatedEnv,
     )
+
     const body = await readJson(response)
 
     expect(response.status).toBe(200)
@@ -156,16 +170,19 @@ describe("authenticated read API", () => {
 
   it("validates event limits, ranges, and cursors", async () => {
     const queries: EventQuery[] = []
-    const fakeStorage: StorageServiceShape = {
+
+    const fakeStorage: TelemetryStore = {
       getLatestSnapshot: () => Effect.succeed(null),
       listEvents: (query) => {
         queries.push(query)
+
         return Effect.succeed({
           events: [],
           nextCursor: { observedAt: "2026-10-24T11:00:00.000Z", id: "event-1" },
         })
       },
     }
+
     const app = createApp({
       storageLayer: storageLayer(fakeStorage),
       now: () => NOW,
@@ -181,8 +198,9 @@ describe("authenticated read API", () => {
         request(path, authorizationHeaders()),
         authenticatedEnv,
       )
+
       expect(response.status, path).toBe(400)
-      expect((await readJson(response)).error.code).toBe("INVALID_QUERY")
+      expect(await readJson(response)).toHaveProperty("error.code", "INVALID_QUERY")
     }
 
     const response = await app.fetch(
@@ -192,6 +210,7 @@ describe("authenticated read API", () => {
       ),
       authenticatedEnv,
     )
+
     const body = await readJson(response)
 
     expect(response.status).toBe(200)
@@ -201,6 +220,6 @@ describe("authenticated read API", () => {
       from: "2026-10-24T10:00:00.000Z",
       to: "2026-10-24T12:00:00.000Z",
     })
-    expect(body.data.nextCursor).toEqual(expect.any(String))
+    expect(body).toHaveProperty("data.nextCursor", expect.any(String))
   })
 })

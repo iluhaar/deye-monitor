@@ -1,20 +1,29 @@
 import type { Context, Next } from "hono"
+import { Schema } from "effect"
 import type { Env } from "../env"
+
+const RefreshSecretSchema = Schema.String.pipe(
+  Schema.check(Schema.isPattern(/^\S{32,4096}$/u)),
+)
 
 function constantTimeEqual(left: string, right: string): boolean {
   const length = Math.max(left.length, right.length)
   let difference = left.length ^ right.length
+
   for (let index = 0; index < length; index += 1) {
     difference |= (left.charCodeAt(index) || 0) ^ (right.charCodeAt(index) || 0)
   }
+
   return difference === 0
 }
 
 export function hasValidBearerToken(request: Request, configured: string | undefined): boolean {
-  if (typeof configured !== "string" || configured.length === 0) return false
+  if (!Schema.is(Schema.NonEmptyString)(configured)) return false
   const authorization = request.headers.get("Authorization")
+
   if (authorization === null) return false
   const match = /^Bearer ([^\s]+)$/iu.exec(authorization)
+
   return match !== null && constantTimeEqual(match[1], configured)
 }
 
@@ -31,6 +40,7 @@ export async function requireBearerToken(
       401,
     )
   }
+
   await next()
 }
 
@@ -42,7 +52,8 @@ export async function requireRefreshToken(
   const configured = context.env.API_REFRESH_TOKEN
   const provided = context.req.header("X-Refresh-Token")
   context.header("Vary", "Authorization, X-Refresh-Token")
-  if (typeof configured !== "string" || !/^\S{32,4096}$/u.test(configured) ||
+
+  if (!Schema.is(RefreshSecretSchema)(configured) ||
     constantTimeEqual(configured, context.env.API_BEARER_TOKEN ?? "") ||
     provided === undefined || provided.length > 4096 || !constantTimeEqual(provided, configured)) {
     return context.json(
@@ -53,5 +64,6 @@ export async function requireRefreshToken(
       403,
     )
   }
+
   await next()
 }

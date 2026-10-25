@@ -1,29 +1,51 @@
 import { applyD1Migrations, env } from "cloudflare:test"
-import type { D1Database } from "@cloudflare/workers-types"
-import type { D1Migration } from "@cloudflare/vitest-plugin"
-import { Effect, Layer } from "effect"
+import { Effect, Layer, Schema } from "effect"
 import { beforeAll, describe, expect, it } from "vitest"
 import { makeNormalizedDeyeService } from "../src/deye/NormalizedLive"
 import { DeyeAuthError, DeyeUnavailableError } from "../src/errors/DeyeErrors"
 import { DeyeService } from "../src/services/DeyeService"
-import type { DeyeServiceShape } from "../src/services/DeyeService"
+import type { DeyeReader } from "../src/services/DeyeService"
 import { IngestionStorage, IngestionStorageError } from "../src/services/IngestionStorage"
-import type { IngestionStorageShape } from "../src/services/IngestionStorage"
-import { makePollingService, pollingLayer, PollingService } from "../src/services/PollingService"
+import type { IngestionStore } from "../src/services/IngestionStorage"
+import { makePollingService, pollingLayer, PollingError, PollingService } from "../src/services/PollingService"
 import { makeD1Storage } from "../src/storage/D1Live"
 import { ingestionStorageLayer, makeIngestionStorage } from "../src/storage/IngestionLive"
 import type { TelemetrySnapshot } from "../src/domain/telemetry"
+import type { RefreshPollRecord } from "../src/storage/RefreshGuard"
+import type { GridEvent } from "../src/services/StorageService"
 import { makeSnapshot } from "./helpers"
 import { evaluateSnapshot } from "../src/domain/grid-status"
 import { createApp } from "../src/api/app"
 import { ingestionLayer } from "../src/runtime/ingestion"
 
-const bindings = env as unknown as { DB: D1Database; TEST_MIGRATIONS: D1Migration[] }
+const bindings = env
 const db = bindings.DB
 const policy = { workflowBudgetMs: 1000, leaseMs: 5000, minimumIntervalMs: 60_000 }
 const options = { workflowBudgetMs: 1000, finalizationBudgetMs: 200, freshnessThresholdSeconds: 180 }
 const base = Date.now() - 60_000
 const iso = (time: number) => new Date(time).toISOString()
+
+interface StoredPollRun {
+  result: RefreshPollRecord["result"]
+  outcome: RefreshPollRecord["outcome"] | null
+  error_category: RefreshPollRecord["errorCategory"]
+}
+
+interface StoredGridEvent {
+  status: GridEvent["status"]
+  observed_at: GridEvent["observedAt"]
+  previous_status: GridEvent["previousStatus"]
+  previous_observed_at: GridEvent["previousObservedAt"]
+  gap_since: string | null
+  idempotency_key: string
+}
+
+interface StoredGridContext {
+  station_id: string
+  status: GridEvent["status"]
+  observed_at: GridEvent["observedAt"]
+  gap_since: string | null
+}
 
 beforeAll(async () => { await applyD1Migrations(db, bindings.TEST_MIGRATIONS) })
 
@@ -32,17 +54,24 @@ async function fixture() {
   await db.prepare(`INSERT INTO stations (id, source, mapping_revision, created_at, updated_at)
     VALUES (?, 'deye-cloud', 'synthetic-test', ?, ?)`).bind(id, iso(base), iso(base)).run()
   let clock = base
+
   let input = makeSnapshot({ stationId: id, mappingRevision: "synthetic-test",
     measuredAt: iso(base - 1000), fetchedAt: iso(base) })
+
   let sourceEffect: Effect.Effect<TelemetrySnapshot, DeyeUnavailableError | DeyeAuthError> | null = null
   let calls = 0
-  const source: DeyeServiceShape = { readLatest: () => Effect.suspend(() => {
+
+  const source: DeyeReader = { readLatest: () => Effect.suspend(() => {
     calls += 1
+
     return sourceEffect ?? Effect.succeed(input)
   }) }
+
   const storage = makeIngestionStorage(db, policy)
   const service = makePollingService(source, storage, options, () => clock)
+
   async function refresh() { return Effect.runPromise(service.refresh(id)) }
+
   async function next(status: "online" | "offline" | "unknown", extra: Partial<TelemetrySnapshot> = {}) {
     clock += 1000
     input = { ...input, measuredAt: iso(clock - 500), fetchedAt: iso(clock),
@@ -50,17 +79,18 @@ async function fixture() {
     await db.prepare(`UPDATE refresh_guards SET lease_until=?, next_allowed_at=? WHERE station_id=?`)
       .bind(iso(base - 10_000), iso(base - 10_000), id).run()
   }
+
   return { id, source, storage, refresh, next, calls: () => calls,
     setInput: (value: TelemetrySnapshot) => { input = value },
     input: () => input,
     fail: (effect: typeof sourceEffect) => { sourceEffect = effect },
     snapshot: () => Effect.runPromise(makeD1Storage(db).getLatestSnapshot(id)),
     polls: () => db.prepare("SELECT * FROM poll_runs WHERE station_id=? ORDER BY started_at, id")
-      .bind(id).all<Record<string, unknown>>(),
+      .bind(id).all<StoredPollRun>(),
     events: () => db.prepare("SELECT * FROM grid_events WHERE station_id=? ORDER BY observed_at")
-      .bind(id).all<Record<string, unknown>>(),
+      .bind(id).all<StoredGridEvent>(),
     context: () => db.prepare("SELECT * FROM grid_context WHERE station_id=?").bind(id)
-      .first<Record<string, unknown>>(),
+      .first<StoredGridContext>(),
   }
 }
 
@@ -127,11 +157,13 @@ describe("finite ingestion on real D1", () => {
     await f.refresh()
     const original = await f.snapshot()
     const measuredAt = f.input().measuredAt
+
     for (const [time, outcome] of [[measuredAt, "replay"], [iso(base - 5000), "backward"]] as const) {
       await f.next("offline", { measuredAt: time })
       expect(await f.refresh()).toMatchObject({ outcome })
       expect(await f.snapshot()).toEqual(original)
     }
+
     expect((await f.events()).results).toHaveLength(0)
     expect((await f.polls()).results.map((p) => p.outcome)).toEqual(["accepted", "replay", "backward"])
   })
@@ -185,14 +217,17 @@ describe("finite ingestion on real D1", () => {
   it("aborts the upstream Effect within the budget, records timeout and releases the lease", async () => {
     const f = await fixture()
     let aborted = false
-    const source: DeyeServiceShape = { readLatest: () => Effect.tryPromise({
+
+    const source: DeyeReader = { readLatest: () => Effect.tryPromise({
       try: (signal) => new Promise<TelemetrySnapshot>(() => {
         signal.addEventListener("abort", () => { aborted = true }, { once: true })
       }),
       catch: () => new DeyeUnavailableError({ operation: "device_latest", status: null, attempts: 1 }),
     }) }
+
     const polling = makePollingService(source, f.storage,
       { ...options, workflowBudgetMs: 300, finalizationBudgetMs: 200 })
+
     expect(await Effect.runPromise(polling.refresh(f.id))).toMatchObject({ outcome: "error", errorCategory: "timeout" })
     expect(aborted).toBe(true)
     expect(await f.snapshot()).toBeNull()
@@ -202,14 +237,18 @@ describe("finite ingestion on real D1", () => {
 
   it("prevents overlapping workflows from making an extra upstream call", async () => {
     const f = await fixture()
-    const slow: DeyeServiceShape = { readLatest: () => Effect.sleep(30).pipe(
+
+    const slow: DeyeReader = { readLatest: () => Effect.sleep(30).pipe(
       Effect.andThen(f.source.readLatest(f.id)),
     ) }
+
     const first = makePollingService(slow, f.storage, options, () => base)
     const second = makePollingService(slow, makeIngestionStorage(db, policy), options, () => base)
+
     const results = await Promise.all([
       Effect.runPromise(first.refresh(f.id)), Effect.runPromise(second.refresh(f.id)),
     ])
+
     expect(results.map((r) => r.status).sort()).toEqual(["busy", "completed"])
     expect(f.calls()).toBe(1)
     expect((await f.polls()).results).toHaveLength(1)
@@ -224,13 +263,17 @@ describe("finite ingestion on real D1", () => {
 
   it("composes through replacement Layers", async () => {
     const f = await fixture()
+
     const live = pollingLayer(options).pipe(Layer.provide(Layer.merge(
       Layer.succeed(DeyeService, f.source), ingestionStorageLayer(db, policy),
     )))
+
     const result = await Effect.runPromise(Effect.gen(function* () {
       const polling = yield* PollingService
+
       return yield* polling.refresh(f.id)
     }).pipe(Effect.provide(live)))
+
     // Test timestamps are old enough to be stale with the real service clock.
     expect(result.status).toBe("completed")
     expect(await f.snapshot()).not.toBeNull()
@@ -238,27 +281,34 @@ describe("finite ingestion on real D1", () => {
 
   it("supports a replacement storage Layer and sanitizes storage failures", async () => {
     const f = await fixture()
-    const broken: IngestionStorageShape = { ...f.storage,
+
+    const broken: IngestionStore = { ...f.storage,
       persist: () => Effect.fail(new IngestionStorageError()),
     }
+
     const live = pollingLayer(options).pipe(Layer.provide(Layer.merge(
       Layer.succeed(DeyeService, f.source), Layer.succeed(IngestionStorage, broken),
     )))
+
     const result = await Effect.runPromise(Effect.gen(function* () {
       return yield* (yield* PollingService).refresh(f.id)
     }).pipe(Effect.provide(live)))
+
     expect(result).toMatchObject({ outcome: "error", errorCategory: "storage" })
   })
 
   it("normalizes a read-only adapter result and stores unknown-only measurements", async () => {
     const f = await fixture()
+
     const raw = { readLatest: (request: string | { deviceSn: string }) => {
       expect(request).toBe("") // Not the internal station ID.
+
       return Effect.succeed({ success: true as const, code: "1000000", msg: null,
         fetchedAt: iso(base), deviceDataList: [{ deviceSn: "synthetic-not-real", deviceType: "INVERTER",
           deviceState: 1, collectionTime: Math.floor((base - 1000) / 1000),
           dataList: [{ key: "GridVoltageL1L2", value: "230", unit: "V" }] }] })
     } }
+
     const service = makePollingService(makeNormalizedDeyeService(raw), f.storage, options, () => base)
     expect(await Effect.runPromise(service.refresh(f.id))).toMatchObject({ outcome: "unverified" })
     expect(await f.snapshot()).toMatchObject({ grid: { status: "unknown", confidence: "unverified", voltageV: 230,
@@ -268,16 +318,19 @@ describe("finite ingestion on real D1", () => {
 
   it("rejects a delayed ingestion worker after lease loss, including its failure metadata", async () => {
     const f = await fixture()
-    const delayed: DeyeServiceShape = { readLatest: () => Effect.tryPromise({
+
+    const delayed: DeyeReader = { readLatest: () => Effect.tryPromise({
       try: async () => {
         await db.prepare("UPDATE refresh_guards SET lease_until=? WHERE station_id=?")
           .bind(iso(base - 1000), f.id).run()
+
         return f.input()
       },
       catch: () => new DeyeUnavailableError({ operation: "device_latest", status: null, attempts: 1 }),
     }) }
+
     await expect(Effect.runPromise(makePollingService(delayed, f.storage, options, () => base).refresh(f.id)))
-      .rejects.toMatchObject({ _tag: "PollingError", category: "storage" })
+      .rejects.toMatchObject(new PollingError({ category: "storage" }))
     expect(await f.snapshot()).toBeNull()
     expect((await f.polls()).results).toHaveLength(0)
     expect(await f.context()).toBeNull()
@@ -293,6 +346,7 @@ describe("finite ingestion on real D1", () => {
     const trigger = `reject_event_${f.id.replaceAll("-", "")}`
     await db.prepare(`CREATE TRIGGER ${trigger} BEFORE INSERT ON grid_events
       WHEN NEW.station_id = '${f.id}' BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END`).run()
+
     try {
       expect(await f.refresh()).toMatchObject({ outcome: "error", errorCategory: "storage" })
       expect(await f.snapshot()).toEqual({ ...original, collectionAvailable: false })
@@ -302,6 +356,7 @@ describe("finite ingestion on real D1", () => {
     } finally {
       await db.prepare(`DROP TRIGGER ${trigger}`).run()
     }
+
     await f.next("offline")
     await f.refresh()
     expect((await f.events()).results).toHaveLength(1)
@@ -333,15 +388,18 @@ describe("finite ingestion on real D1", () => {
   it("composes adapter authentication, normalization, polling and D1 with fake HTTP only", async () => {
     const f = await fixture()
     const calls: string[] = []
+    const latestRequests: unknown[] = []
+
     const fakeFetch: typeof fetch = async (url, init) => {
       const path = new URL(String(url)).pathname
       calls.push(path)
-      let body: unknown
+      let body: Schema.Json
+
       if (path === "/v1.0/account/token") {
         body = { code: "1000000", success: true, accessToken: "synthetic-token-never-persist",
           tokenType: "bearer", expiresIn: "5183999" }
       } else if (path === "/v1.0/device/latest") {
-        expect(JSON.parse(String(init?.body))).toMatchObject({ deviceList: ["synthetic-inverter"] })
+        latestRequests.push(JSON.parse(String(init?.body)))
         body = { code: "1000000", success: true, deviceDataList: [{
           deviceSn: "synthetic-inverter", deviceType: "INVERTER", deviceState: 1,
           collectionTime: Math.floor(base / 1000),
@@ -351,18 +409,23 @@ describe("finite ingestion on real D1", () => {
       } else {
         throw new Error("Unexpected fake HTTP path")
       }
+
       return new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } })
     }
+
     const live = ingestionLayer(db, { baseUrl: "https://eu1-developer.deyecloud.com",
       appId: "synthetic-app-id", appSecret: "synthetic-app-secret", passwordHash: "synthetic-hash",
       email: "synthetic@example.invalid", deviceSn: "synthetic-inverter", deviceType: "INVERTER",
     }, { workflowBudgetMs: 5000, leaseMs: 15_000, minimumIntervalMs: 60_000 },
     1000, 180, { fetch: fakeFetch, now: () => base })
+
     const result = await Effect.runPromise(Effect.gen(function* () {
       return yield* (yield* PollingService).refresh(f.id)
     }).pipe(Effect.provide(live)))
+
     expect(result).toMatchObject({ outcome: "unverified" })
     expect(calls).toEqual(["/v1.0/account/token", "/v1.0/device/latest"])
+    expect(latestRequests).toMatchObject([{ deviceList: ["synthetic-inverter"] }])
     expect(await f.snapshot()).toMatchObject({ grid: { status: "unknown", voltageV: 230 },
       battery: { socPercent: 55, powerW: null }, fetchedAt: iso(base) })
     const persisted = JSON.stringify([await f.snapshot(), await f.polls(), await f.events()])
@@ -377,10 +440,13 @@ describe("finite ingestion on real D1", () => {
   it("does not overwrite an already-committed poll or mark a false gap on late timeout metadata", async () => {
     const f = await fixture()
     const acquired = await Effect.runPromise(f.storage.acquire(f.id))
+
     if (acquired.status !== "acquired") throw new Error("Expected lease")
+
     const poll = { id: crypto.randomUUID(), startedAt: iso(base), completedAt: iso(base),
       result: "success" as const, outcome: "accepted" as const, latencyMs: 0,
       measuredAt: f.input().measuredAt, errorCategory: null }
+
     try {
       await Effect.runPromise(f.storage.persist(acquired.lease, f.input(), poll, base, 180))
       await Effect.runPromise(f.storage.recordFailure(acquired.lease, { ...poll,

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
+    "lint": "oxlint --deny-warnings src test vitest.config.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -20,7 +21,9 @@
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.4.7",
     "@cloudflare/workers-types": "5.20261024.1",
+    "@oxlint/plugins": "1.89.0",
     "@types/node": "26.6.5",
+    "oxlint": "1.89.0",
     "typescript": "7.0.2",
     "vitest": "5.0.5",
     "wrangler": "4.152.0"

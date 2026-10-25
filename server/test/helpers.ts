@@ -1,7 +1,7 @@
 import { Effect, Layer } from "effect"
 import type { Env } from "../src/env"
 import type { TelemetrySnapshot } from "../src/domain/telemetry"
-import { StorageService, type StorageServiceShape } from "../src/services/StorageService"
+import { StorageService, type TelemetryStore } from "../src/services/StorageService"
 
 export const NOW = Date.parse("2026-10-24T12:00:00.000Z")
 
@@ -45,8 +45,8 @@ export function authorizationHeaders(): HeadersInit {
 }
 
 export function storageLayer(
-  implementation: Partial<StorageServiceShape> &
-    Pick<StorageServiceShape, "getLatestSnapshot" | "listEvents">,
+  implementation: Partial<TelemetryStore> &
+    Pick<TelemetryStore, "getLatestSnapshot" | "listEvents">,
 ) {
   return Layer.succeed(StorageService, implementation)
 }

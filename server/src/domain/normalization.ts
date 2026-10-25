@@ -1,3 +1,4 @@
+import { Schema } from "effect"
 import {
   evaluateFreshness,
   type FreshnessEvaluation,
@@ -90,11 +91,29 @@ export class TelemetryNormalizationError extends Error {
   }
 }
 
-type RecordLike = Record<string, unknown>
+const ScalarSchema = Schema.NullOr(Schema.Union([Schema.String, Schema.Number]))
 
-function isRecord(value: unknown): value is RecordLike {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-}
+const MeasurementSchema = Schema.Struct({
+  key: Schema.String.pipe(Schema.check(Schema.isPattern(/\S/))),
+  value: Schema.optional(ScalarSchema),
+  unit: Schema.optional(Schema.NullOr(Schema.String)),
+})
+
+const DeviceSchema = Schema.Struct({
+  deviceSn: Schema.optional(Schema.NullOr(Schema.String)),
+  deviceType: Schema.optional(Schema.NullOr(Schema.String)),
+  deviceState: Schema.optional(ScalarSchema),
+  collectionTime: Schema.optional(ScalarSchema),
+  dataList: Schema.Array(MeasurementSchema),
+})
+
+const ResponseSchema = Schema.Struct({
+  code: Schema.optional(ScalarSchema),
+  msg: Schema.optional(Schema.NullOr(Schema.String)),
+  success: Schema.optional(Schema.Boolean),
+  fetchedAt: Schema.optional(Schema.String),
+  deviceDataList: Schema.Array(DeviceSchema),
+})
 
 function invalidPayload(message: string): never {
   throw new TelemetryNormalizationError(message, "invalid_payload")
@@ -108,109 +127,19 @@ function ambiguousDevice(message: string): never {
   throw new TelemetryNormalizationError(message, "ambiguous_device")
 }
 
-function optionalString(
-  value: unknown,
-  field: string,
-): string | null | undefined {
-  if (value === undefined || value === null) return value
-  if (typeof value !== "string") invalidPayload(`${field} must be a string`)
-  return value
-}
+function readResponse(input: DeyeDeviceLatestResponse): DeyeDeviceLatestResponse {
+  let value: Schema.Schema.Type<typeof ResponseSchema>
 
-function optionalScalar(
-  value: unknown,
-  field: string,
-): string | number | null | undefined {
-  if (value === undefined || value === null) return value
-  if (typeof value !== "string" && typeof value !== "number") {
-    invalidPayload(`${field} must be a string, number, or null`)
-  }
-  return value
-}
-
-function readMeasurement(value: unknown, index: number): DeyeLatestMeasurement {
-  if (!isRecord(value)) {
-    return invalidPayload(`dataList[${index}] must be an object`)
+  try {
+    value = Schema.decodeUnknownSync(ResponseSchema)(input)
+  } catch {
+    return invalidPayload("device/latest response has an invalid payload")
   }
 
-  const key = value.key
-  if (typeof key !== "string" || key.trim() === "") {
-    return invalidPayload(`dataList[${index}].key must be a non-empty string`)
-  }
-
-  const rawUnit = value.unit
-  if (rawUnit !== undefined && rawUnit !== null && typeof rawUnit !== "string") {
-    return invalidPayload(`dataList[${index}].unit must be a string or null`)
-  }
-
-  const rawValue = value.value
-  if (
-    rawValue !== undefined &&
-    rawValue !== null &&
-    typeof rawValue !== "string" &&
-    typeof rawValue !== "number"
-  ) {
-    return invalidPayload(
-      `dataList[${index}].value must be a string, number, or null`,
-    )
-  }
-
-  return {
-    key,
-    value: rawValue === undefined ? null : rawValue,
-    unit: rawUnit === undefined ? null : rawUnit,
-  }
-}
-
-function readDevice(value: unknown, index: number): DeyeLatestDevice {
-  if (!isRecord(value)) {
-    return invalidPayload(`deviceDataList[${index}] must be an object`)
-  }
-
-  const deviceSn = optionalString(value.deviceSn, `deviceDataList[${index}].deviceSn`)
-  const deviceType = optionalString(
-    value.deviceType,
-    `deviceDataList[${index}].deviceType`,
-  )
-  const deviceState = optionalScalar(
-    value.deviceState,
-    `deviceDataList[${index}].deviceState`,
-  )
-  const collectionTime = optionalScalar(
-    value.collectionTime,
-    `deviceDataList[${index}].collectionTime`,
-  )
-  const rawDataList = value.dataList
-  if (!Array.isArray(rawDataList)) {
-    return invalidPayload(`deviceDataList[${index}].dataList must be an array`)
-  }
-
-  return {
-    deviceSn,
-    deviceType,
-    deviceState,
-    collectionTime,
-    dataList: rawDataList.map(readMeasurement),
-  }
-}
-
-function readResponse(value: unknown): DeyeDeviceLatestResponse {
-  if (!isRecord(value)) return invalidPayload("device/latest response must be an object")
-
-  if (value.success !== undefined && typeof value.success !== "boolean") {
-    return invalidPayload("success must be a boolean when present")
-  }
   if (value.success === false) {
     return invalidPayload("device/latest response was not successful")
   }
-  if (
-    value.code !== undefined &&
-    value.code !== null &&
-    typeof value.code !== "string" &&
-    typeof value.code !== "number"
-  ) {
-    return invalidPayload("code must be a string or number when present")
-  }
+
   if (
     value.code !== undefined &&
     value.code !== null &&
@@ -219,23 +148,24 @@ function readResponse(value: unknown): DeyeDeviceLatestResponse {
   ) {
     return invalidPayload("device/latest response has an unsupported success code")
   }
-  if (value.msg !== undefined && value.msg !== null && typeof value.msg !== "string") {
-    return invalidPayload("msg must be a string when present")
-  }
 
-  if (!Array.isArray(value.deviceDataList)) {
-    return invalidPayload("deviceDataList must be an array")
-  }
   if (value.deviceDataList.length === 0) {
     return invalidPayload("deviceDataList must contain a device")
   }
 
   return {
-    code: value.code as string | number | null | undefined,
-    msg: value.msg as string | null | undefined,
-    success: value.success as boolean | undefined,
-    fetchedAt: value.fetchedAt as string | undefined,
-    deviceDataList: value.deviceDataList.map(readDevice),
+    code: value.code,
+    msg: value.msg,
+    success: value.success,
+    fetchedAt: value.fetchedAt,
+    deviceDataList: value.deviceDataList.map((device) => ({
+      ...device,
+      dataList: device.dataList.map((measurement) => ({
+        key: measurement.key,
+        value: measurement.value ?? null,
+        unit: measurement.unit ?? null,
+      })),
+    })),
   }
 }
 
@@ -243,7 +173,9 @@ function chooseDevice(devices: readonly DeyeLatestDevice[]): DeyeLatestDevice {
   const inverters = devices.filter(
     (device) => device.deviceType?.trim().toUpperCase() === "INVERTER",
   )
+
   if (inverters.length === 1) return inverters[0]
+
   if (inverters.length > 1) {
     return ambiguousDevice(
       "device/latest response contains more than one possible inverter",
@@ -255,7 +187,9 @@ function chooseDevice(devices: readonly DeyeLatestDevice[]): DeyeLatestDevice {
   // type must never be treated as an inverter.
   if (devices.length === 1) {
     const only = devices[0]
+
     if (only.deviceType === undefined || only.deviceType === null) return only
+
     return invalidPayload("device/latest response contains a non-inverter device")
   }
 
@@ -273,10 +207,12 @@ function sourceTimestamp(value: string | number | null | undefined): string | nu
   if (value === undefined || value === null) return null
 
   const text =
-    typeof value === "number" ? String(value) : value.trim()
+    String(value).trim()
+
   if (!/^\d+$/.test(text)) return null
 
   const seconds = Number(text)
+
   if (
     !Number.isSafeInteger(seconds) ||
     seconds < 0 ||
@@ -287,24 +223,28 @@ function sourceTimestamp(value: string | number | null | undefined): string | nu
 
   const millis = seconds * 1000
   const date = new Date(millis)
+
   return Number.isFinite(date.getTime()) ? date.toISOString() : null
 }
 
 function canonicalFetchedAt(value: string): string {
-  if (typeof value !== "string" || value.trim() === "") {
+  if (!Schema.is(Schema.String)(value) || value.trim() === "") {
     return invalidOptions("fetchedAt must be a non-empty ISO timestamp")
   }
 
   const trimmed = value.trim()
+
   // A timezone-less local timestamp is ambiguous in a Worker and is rejected.
   if (!/(?:Z|[+-]\d{2}:?\d{2})$/i.test(trimmed)) {
     return invalidOptions("fetchedAt must include an explicit timezone")
   }
 
   const millis = Date.parse(trimmed)
+
   if (!Number.isFinite(millis)) {
     return invalidOptions("fetchedAt must be a valid timestamp")
   }
+
   return new Date(millis).toISOString()
 }
 
@@ -312,28 +252,30 @@ function normalizeOptions(
   options: NormalizeDeyeDeviceLatestOptions,
   payloadFetchedAt?: string,
 ): ValidatedNormalizeDeyeDeviceLatestOptions {
-  if (!isRecord(options)) return invalidOptions("normalization options are required")
+  if (!Schema.is(Schema.Struct({}))(options)) return invalidOptions("normalization options are required")
 
   const stationId = options.stationId
-  if (typeof stationId !== "string" || stationId.trim() === "") {
+
+  if (!Schema.is(Schema.String)(stationId) || stationId.trim() === "") {
     return invalidOptions("stationId must be a non-empty string")
   }
 
   const mappingRevision = options.mappingRevision ?? DEYE_DEVICE_LATEST_MAPPING_REVISION
-  if (typeof mappingRevision !== "string" || mappingRevision.trim() === "") {
+
+  if (!Schema.is(Schema.String)(mappingRevision) || mappingRevision.trim() === "") {
     return invalidOptions("mappingRevision must be a non-empty string")
   }
 
   if (
     options.nowMs !== undefined &&
-    (typeof options.nowMs !== "number" || !Number.isFinite(options.nowMs))
+    !Schema.is(Schema.Finite)(options.nowMs)
   ) {
     return invalidOptions("nowMs must be a finite number when present")
   }
+
   if (
     options.freshnessThresholdSeconds !== undefined &&
-    (typeof options.freshnessThresholdSeconds !== "number" ||
-      !Number.isFinite(options.freshnessThresholdSeconds) ||
+    (!Schema.is(Schema.Finite)(options.freshnessThresholdSeconds) ||
       options.freshnessThresholdSeconds < 0)
   ) {
     return invalidOptions(
@@ -342,6 +284,7 @@ function normalizeOptions(
   }
 
   const fetchedAt = options.fetchedAt ?? payloadFetchedAt
+
   if (fetchedAt === undefined) {
     return invalidOptions("fetchedAt is required")
   }
@@ -360,12 +303,16 @@ const NUMERIC_STRING =
 
 function finiteNumber(value: string | number | null): number | null {
   if (value === null) return null
-  if (typeof value === "number") {
+
+  if (Schema.is(Schema.Number)(value)) {
     return Number.isFinite(value) ? value : null
   }
+
   const trimmed = value.trim()
+
   if (!NUMERIC_STRING.test(trimmed)) return null
   const parsed = Number(trimmed)
+
   return Number.isFinite(parsed) ? parsed : null
 }
 
@@ -382,17 +329,21 @@ function measurementValue(
   predicate: MeasurementPredicate = () => true,
 ): number | null {
   const matches = measurements.filter((measurement) => measurement.key === key)
+
   if (matches.length === 0) return null
 
   const values: number[] = []
+
   for (const measurement of matches) {
     if (measurement.unit !== unit) return null
     const value = finiteNumber(measurement.value)
+
     if (value === null || !predicate(value)) return null
     values.push(value)
   }
 
   const first = values[0]
+
   return values.every((value) => value === first) ? first : null
 }
 
@@ -426,31 +377,34 @@ function optionsFromArguments(
   fetchedAt: string | undefined,
   nowMs: number | undefined,
 ): NormalizeDeyeDeviceLatestOptions {
-  if (typeof optionsOrStationId !== "string") return optionsOrStationId
+  if (!Schema.is(Schema.String)(optionsOrStationId)) return optionsOrStationId
+
   return { stationId: optionsOrStationId, fetchedAt, nowMs }
 }
 
 export function normalizeDeyeDeviceLatest(
-  payload: unknown,
+  payload: DeyeDeviceLatestResponse,
   options: NormalizeDeyeDeviceLatestOptions,
 ): NormalizedTelemetrySnapshot
 export function normalizeDeyeDeviceLatest(
-  payload: unknown,
+  payload: DeyeDeviceLatestResponse,
   stationId: string,
   fetchedAt: string,
   nowMs?: number,
 ): NormalizedTelemetrySnapshot
 export function normalizeDeyeDeviceLatest(
-  payload: unknown,
+  payload: DeyeDeviceLatestResponse,
   optionsOrStationId: NormalizeDeyeDeviceLatestOptions | string,
   fetchedAt?: string,
   nowMs?: number,
 ): NormalizedTelemetrySnapshot {
   const response = readResponse(payload)
+
   const options = normalizeOptions(
     optionsFromArguments(optionsOrStationId, fetchedAt, nowMs),
     response.fetchedAt,
   )
+
   const device = chooseDevice(response.deviceDataList)
   const measurements = device.dataList
   const measuredAt = sourceTimestamp(device.collectionTime)
@@ -461,12 +415,14 @@ export function normalizeDeyeDeviceLatest(
     "V",
     (value) => value >= 0,
   )
+
   const frequencyHz = measurementValue(
     measurements,
     "GridFrequency",
     "Hz",
     (value) => value >= 0,
   )
+
   const socPercent = measurementValue(
     measurements,
     "SOC",
@@ -485,7 +441,9 @@ export function normalizeDeyeDeviceLatest(
   )
 
   const evidence: string[] = []
+
   if (voltageV !== null) evidence.push("grid_voltage")
+
   if (frequencyHz !== null) evidence.push("grid_frequency")
 
   return {

@@ -1,7 +1,13 @@
 export * from "../errors/DeyeErrors"
+
 export * from "./config"
+
 export * from "./DeyeClient"
+
 export * from "./DeyeLive"
+
 export * from "./DeyeRawService"
+
 export * from "./schemas"
+
 export * from "./types"

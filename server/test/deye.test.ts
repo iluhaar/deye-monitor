@@ -1,9 +1,8 @@
-import { Effect, Fiber } from "effect"
-import { describe, expect, it } from "vitest"
+import { Effect, Fiber, Schema } from "effect"
+import { assert, describe, expect, it } from "vitest"
 import fixture from "./fixtures/deye-device-latest.json"
 import {
   normalizeDeyeDeviceLatest,
-  type DeyeDeviceLatestResponse,
 } from "../src/domain/normalization"
 import {
   DeyeAuthError,
@@ -15,6 +14,7 @@ import {
 } from "../src/errors/DeyeErrors"
 import { makeDeyeRequestClient } from "../src/deye/DeyeClient"
 import { resolveDeyeConfig } from "../src/deye/config"
+import type { DeyeConfig } from "../src/deye/config"
 import { makeDeyeLayer } from "../src/deye/DeyeLive"
 import { DeyeRawService } from "../src/deye/DeyeRawService"
 import { decodeLatestResponse, decodeTokenResponse } from "../src/deye/schemas"
@@ -31,7 +31,7 @@ type FetchStep =
   | Error
   | (() => Promise<Response>)
 
-function response(body: unknown, status = 200): Response {
+function response(body: Schema.Json, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: { "content-type": "application/json" },
@@ -41,23 +41,31 @@ function response(body: unknown, status = 200): Response {
 function fakeFetch(steps: readonly FetchStep[]) {
   const calls: FetchCall[] = []
   let index = 0
+
   const fetch: typeof globalThis.fetch = async (input, init) => {
     calls.push({ url: String(input), init })
     const step = steps[index]
     index += 1
+
     if (step === undefined) throw new Error("unexpected fake request")
+
     if (step instanceof Error) throw step
-    if (typeof step === "function") return step()
-    return step
+
+    if (step instanceof Response) return step
+
+    return step()
   }
+
   return { fetch, calls }
 }
 
 function deferred<T>() {
   let resolve!: (value: T) => void
+
   const promise = new Promise<T>((res) => {
     resolve = res
   })
+
   return { promise, resolve }
 }
 
@@ -65,6 +73,7 @@ function hangingCancelStream(onCancel: () => void): ReadableStream<Uint8Array> {
   return new ReadableStream<Uint8Array>({
     cancel() {
       onCancel()
+
       return new Promise<void>(() => undefined)
     },
   })
@@ -103,7 +112,7 @@ function latestSuccess(): Response {
   })
 }
 
-function config(overrides: Record<string, unknown> = {}) {
+function config(overrides: Partial<DeyeConfig> = {}) {
   return {
     baseUrl: "https://configured-region.example.test",
     appId: "app-id",
@@ -138,18 +147,38 @@ function latestProgram(
   )
 }
 
-async function rejected(promise: Promise<unknown>): Promise<unknown> {
+async function rejected<A>(promise: Promise<A>): Promise<Error> {
   try {
     await promise
-    throw new Error("expected the Effect to fail")
-  } catch (error) {
-    return error
+  } catch (cause) {
+    assert.instanceOf(cause, Error)
+
+    return cause
   }
+
+  throw new Error("expected the Effect to fail")
 }
 
 describe("read-only Deye raw adapter", () => {
+  it("fails the rejection helper when an effect unexpectedly succeeds", async () => {
+    await expect(rejected(Promise.resolve("unexpected success")))
+      .rejects.toThrow("expected the Effect to fail")
+  })
+
+  it.each(["", "INVERTER_1", { deviceSn: "INVERTER_1" }])(
+    "omits an unconfigured device type for latest request %j", async (request) => {
+      const configured = config({ deviceType: undefined })
+      const http = fakeFetch([authSuccess(), latestSuccess()])
+
+      expect(resolveDeyeConfig(configured)?.defaultLatest).toEqual({ deviceSn: "INVERTER_1" })
+      await runLatest(makeDeyeLayer(configured, { fetch: http.fetch }), request)
+      expect(JSON.parse(String(http.calls[1]?.init?.body))).toEqual({ deviceList: ["INVERTER_1"] })
+    },
+  )
+
   it("decodes the sanitized device/latest shape without normalizing measurements", async () => {
     const http = fakeFetch([authSuccess(), latestSuccess()])
+
     const layer = makeDeyeLayer(config(), {
       fetch: http.fetch,
       now: () => FIXED_NOW,
@@ -187,13 +216,13 @@ describe("read-only Deye raw adapter", () => {
       deviceList: ["INVERTER_1"],
       deviceType: "INVERTER",
     })
-    expect(http.calls[1]?.init?.headers).toMatchObject({
-      Authorization: "Bearer token-that-must-not-leak",
-    })
+    expect(new Headers(http.calls[1]?.init?.headers).get("Authorization"))
+      .toBe("Bearer token-that-must-not-leak")
   })
 
   it("classifies malformed HTTP-200 JSON as a schema failure without retrying", async () => {
     const http = fakeFetch([authSuccess(), new Response("{malformed", { status: 200 })])
+
     const layer = makeDeyeLayer(config(), {
       fetch: http.fetch,
       sleep: async () => undefined,
@@ -201,8 +230,8 @@ describe("read-only Deye raw adapter", () => {
 
     const error = await rejected(runLatest(layer))
 
-    expect(error).toBeInstanceOf(DeyeSchemaError)
-    expect((error as DeyeSchemaError).reason).toBe("invalid_json")
+    assert.instanceOf(error, DeyeSchemaError)
+    expect(error.reason).toBe("invalid_json")
     expect(http.calls).toHaveLength(2)
   })
 
@@ -213,6 +242,7 @@ describe("read-only Deye raw adapter", () => {
         status: 200,
       }),
     ])
+
     const layer = makeDeyeLayer(config({ maxResponseBytes: 256 }), {
       fetch: http.fetch,
       sleep: async () => undefined,
@@ -220,13 +250,14 @@ describe("read-only Deye raw adapter", () => {
 
     const error = await rejected(runLatest(layer))
 
-    expect(error).toBeInstanceOf(DeyeSchemaError)
-    expect((error as DeyeSchemaError).reason).toBe("payload_too_large")
+    assert.instanceOf(error, DeyeSchemaError)
+    expect(error.reason).toBe("payload_too_large")
     expect(http.calls).toHaveLength(2)
   })
 
   it("maps a HTTP-200 auth envelope failure without exposing its message", async () => {
     const secret = "message contains no credentials in this error"
+
     const http = fakeFetch([
       response({
         code: "2101017",
@@ -234,12 +265,13 @@ describe("read-only Deye raw adapter", () => {
         success: false,
       }),
     ])
+
     const layer = makeDeyeLayer(config(), { fetch: http.fetch })
 
     const error = await rejected(runLatest(layer))
 
-    expect(error).toBeInstanceOf(DeyeAuthError)
-    expect((error as DeyeAuthError).code).toBe("2101017")
+    assert.instanceOf(error, DeyeAuthError)
+    expect(error.code).toBe("2101017")
     expect(JSON.stringify(error)).not.toContain(secret)
     expect(http.calls).toHaveLength(1)
   })
@@ -251,6 +283,7 @@ describe("read-only Deye raw adapter", () => {
         headers: { Location: "https://attacker.example.test/collect" },
       }),
     ])
+
     const layer = makeDeyeLayer(config(), {
       fetch: http.fetch,
       sleep: async () => undefined,
@@ -258,8 +291,8 @@ describe("read-only Deye raw adapter", () => {
 
     const error = await rejected(runLatest(layer))
 
-    expect(error).toBeInstanceOf(DeyeUnavailableError)
-    expect((error as DeyeUnavailableError).status).toBe(307)
+    assert.instanceOf(error, DeyeUnavailableError)
+    expect(error.status).toBe(307)
     expect(http.calls).toHaveLength(1)
     expect(http.calls[0]?.init?.redirect).toBe("manual")
   })
@@ -276,11 +309,14 @@ describe("read-only Deye raw adapter", () => {
 
     const http = fakeFetch([])
     const resolved = resolveDeyeConfig(config())
+
     if (resolved === null) throw new Error("expected test config to resolve")
+
     const client = makeDeyeRequestClient(resolved, {
       fetch: http.fetch,
       sleep: async () => undefined,
     })
+
     const error = await rejected(
       client.postJson({
         operation: "device_latest",
@@ -304,6 +340,7 @@ describe("read-only Deye raw adapter", () => {
         expiresIn: "5183999",
       }),
     ])
+
     const tokenLayer = makeDeyeLayer(config(), { fetch: tokenHttp.fetch })
     const tokenError = await rejected(runLatest(tokenLayer))
     expect(tokenError).toBeInstanceOf(DeyeAuthError)
@@ -315,13 +352,15 @@ describe("read-only Deye raw adapter", () => {
       response({ code: "429", success: true, deviceDataList: [] }),
       response({ code: "429", success: true, deviceDataList: [] }),
     ])
+
     const latestLayer = makeDeyeLayer(config({ maxRetries: 2 }), {
       fetch: latestHttp.fetch,
       sleep: async () => undefined,
     })
+
     const latestError = await rejected(runLatest(latestLayer))
-    expect(latestError).toBeInstanceOf(DeyeRateLimitError)
-    expect((latestError as DeyeRateLimitError).attempts).toBe(3)
+    assert.instanceOf(latestError, DeyeRateLimitError)
+    expect(latestError.attempts).toBe(3)
     expect(latestHttp.calls).toHaveLength(4)
   })
 
@@ -351,6 +390,7 @@ describe("read-only Deye raw adapter", () => {
       authSuccess(),
       new Response("upstream auth failure", { status }),
     ])
+
     const layer = makeDeyeLayer(config(), {
       fetch: http.fetch,
       sleep: async () => undefined,
@@ -358,19 +398,21 @@ describe("read-only Deye raw adapter", () => {
 
     const error = await rejected(runLatest(layer))
 
-    expect(error).toBeInstanceOf(DeyeAuthError)
-    expect((error as DeyeAuthError).status).toBe(status)
+    assert.instanceOf(error, DeyeAuthError)
+    expect(error.status).toBe(status)
     expect(http.calls).toHaveLength(4)
   })
 
   it("retries 429 only within the configured bound", async () => {
     const delays: number[] = []
+
     const http = fakeFetch([
       authSuccess(),
       response({ code: "429", success: false }, 429),
       response({ code: "429", success: false }, 429),
       response({ code: "429", success: false }, 429),
     ])
+
     const layer = makeDeyeLayer(config({ maxRetries: 2 }), {
       fetch: http.fetch,
       random: () => 1,
@@ -381,8 +423,8 @@ describe("read-only Deye raw adapter", () => {
 
     const error = await rejected(runLatest(layer))
 
-    expect(error).toBeInstanceOf(DeyeRateLimitError)
-    expect((error as DeyeRateLimitError).attempts).toBe(3)
+    assert.instanceOf(error, DeyeRateLimitError)
+    expect(error.attempts).toBe(3)
     expect(http.calls).toHaveLength(4)
     expect(delays).toHaveLength(2)
   })
@@ -394,6 +436,7 @@ describe("read-only Deye raw adapter", () => {
       () => new Promise<Response>(() => undefined),
       () => new Promise<Response>(() => undefined),
     ])
+
     const layer = makeDeyeLayer(config({ timeoutMs: 1, maxRetries: 2 }), {
       fetch: http.fetch,
       sleep: async () => undefined,
@@ -401,8 +444,8 @@ describe("read-only Deye raw adapter", () => {
 
     const error = await rejected(runLatest(layer))
 
-    expect(error).toBeInstanceOf(DeyeTimeoutError)
-    expect((error as DeyeTimeoutError).attempts).toBe(3)
+    assert.instanceOf(error, DeyeTimeoutError)
+    expect(error.attempts).toBe(3)
     expect(http.calls).toHaveLength(4)
   })
 
@@ -412,22 +455,29 @@ describe("read-only Deye raw adapter", () => {
     let authCalls = 0
     let authAborted = 0
     const calls: FetchCall[] = []
+
     const fetch: typeof globalThis.fetch = async (input, init) => {
       const url = String(input)
       calls.push({ url, init })
+
       if (url.includes("/account/token")) {
         authCalls += 1
+
         if (authCalls === 1) {
           authStarted.resolve()
           init?.signal?.addEventListener("abort", () => {
             authAborted += 1
           })
+
           return firstAuthResponse.promise
         }
+
         return authSuccess()
       }
+
       return latestSuccess()
     }
+
     const layer = makeDeyeLayer(config(), { fetch })
     const fiber = Effect.runFork(latestProgram(layer))
 
@@ -453,16 +503,20 @@ describe("read-only Deye raw adapter", () => {
     const lateLatestResponse = deferred<Response>()
     let latestAborted = 0
     const calls: FetchCall[] = []
+
     const fetch: typeof globalThis.fetch = async (input, init) => {
       const url = String(input)
       calls.push({ url, init })
+
       if (url.includes("/account/token")) return authSuccess()
       latestStarted.resolve()
       init?.signal?.addEventListener("abort", () => {
         latestAborted += 1
       })
+
       return lateLatestResponse.promise
     }
+
     const layer = makeDeyeLayer(config({ maxRetries: 2 }), { fetch })
     const fiber = Effect.runFork(latestProgram(layer))
 
@@ -480,14 +534,17 @@ describe("read-only Deye raw adapter", () => {
     const backoffStarted = deferred<void>()
     let backoffSignal: AbortSignal | undefined
     const http = fakeFetch([authSuccess(), new Response(null, { status: 503 })])
+
     const layer = makeDeyeLayer(config({ maxRetries: 2 }), {
       fetch: http.fetch,
       sleep: async (_milliseconds, signal) => {
         backoffSignal = signal
         backoffStarted.resolve()
+
         return new Promise<void>(() => undefined)
       },
     })
+
     const fiber = Effect.runFork(latestProgram(layer))
 
     await backoffStarted.promise
@@ -502,10 +559,13 @@ describe("read-only Deye raw adapter", () => {
     controller.abort()
     let calls = 0
     const resolved = resolveDeyeConfig(config())
+
     if (resolved === null) throw new Error("expected test config to resolve")
+
     const client = makeDeyeRequestClient(resolved, {
       fetch: async () => {
         calls += 1
+
         return latestSuccess()
       },
     })
@@ -521,7 +581,7 @@ describe("read-only Deye raw adapter", () => {
     )
 
     expect(error).toBeInstanceOf(Error)
-    expect((error as Error).name).toBe("AbortError")
+    expect(error.name).toBe("AbortError")
     expect(calls).toBe(0)
   })
 
@@ -530,14 +590,18 @@ describe("read-only Deye raw adapter", () => {
     const controller = new AbortController()
     let requestSignal: AbortSignal | undefined
     const resolved = resolveDeyeConfig(config())
+
     if (resolved === null) throw new Error("expected test config to resolve")
+
     const client = makeDeyeRequestClient(resolved, {
       fetch: async (_input, init) => {
         requestSignal = init?.signal ?? undefined
         started.resolve()
+
         return new Promise<Response>(() => undefined)
       },
     })
+
     const request = client.postJson({
       operation: "device_latest",
       path: "/v1.0/device/latest",
@@ -551,7 +615,7 @@ describe("read-only Deye raw adapter", () => {
     const error = await rejected(request)
 
     expect(error).toBeInstanceOf(Error)
-    expect((error as Error).name).toBe("AbortError")
+    expect(error.name).toBe("AbortError")
     expect(requestSignal?.aborted).toBe(true)
   })
 
@@ -561,15 +625,19 @@ describe("read-only Deye raw adapter", () => {
     let backoffSignal: AbortSignal | undefined
     const http = fakeFetch([new Response(null, { status: 503 })])
     const resolved = resolveDeyeConfig(config({ maxRetries: 2 }))
+
     if (resolved === null) throw new Error("expected test config to resolve")
+
     const client = makeDeyeRequestClient(resolved, {
       fetch: http.fetch,
       sleep: async (_milliseconds, signal) => {
         backoffSignal = signal
         backoffStarted.resolve()
+
         return new Promise<void>(() => undefined)
       },
     })
+
     const request = client.postJson({
       operation: "device_latest",
       path: "/v1.0/device/latest",
@@ -583,7 +651,7 @@ describe("read-only Deye raw adapter", () => {
     const error = await rejected(request)
 
     expect(error).toBeInstanceOf(Error)
-    expect((error as Error).name).toBe("AbortError")
+    expect(error.name).toBe("AbortError")
     expect(backoffSignal?.aborted).toBe(true)
     expect(http.calls.filter(({ url }) => url.includes("/device/latest"))).toHaveLength(1)
   })
@@ -594,19 +662,24 @@ describe("read-only Deye raw adapter", () => {
     let authSignal: AbortSignal | undefined
     let authAborted = 0
     const calls: FetchCall[] = []
+
     const fetch: typeof globalThis.fetch = async (input, init) => {
       const url = String(input)
       calls.push({ url, init })
+
       if (url.includes("/account/token")) {
         authSignal = init?.signal ?? undefined
         init?.signal?.addEventListener("abort", () => {
           authAborted += 1
         })
         authStarted.resolve()
+
         return authResponse.promise
       }
+
       return latestSuccess()
     }
+
     const layer = makeDeyeLayer(config(), { fetch })
     const first = Effect.runFork(latestProgram(layer))
     const second = Effect.runFork(latestProgram(layer))
@@ -626,11 +699,14 @@ describe("read-only Deye raw adapter", () => {
 
   it("cancels non-2xx response bodies without awaiting a hanging cancel", async () => {
     let canceled = false
+
     const responseBody = hangingCancelStream(() => {
       canceled = true
     })
+
     const responseWithBody = new Response(responseBody, { status: 401 })
     const body = responseWithBody.body
+
     const client = makeDeyeRequestClient(resolveDeyeConfig(config())!, {
       fetch: async () => responseWithBody,
     })
@@ -651,9 +727,11 @@ describe("read-only Deye raw adapter", () => {
 
   it("cancels oversized response bodies rejected by Content-Length", async () => {
     let canceled = false
+
     const responseBody = hangingCancelStream(() => {
       canceled = true
     })
+
     const responseWithBody = new Response(responseBody, {
       status: 200,
       headers: {
@@ -661,7 +739,9 @@ describe("read-only Deye raw adapter", () => {
         "content-type": "application/json",
       },
     })
+
     const body = responseWithBody.body
+
     const client = makeDeyeRequestClient(resolveDeyeConfig(config({ maxResponseBytes: 16 }))!, {
       fetch: async () => responseWithBody,
     })
@@ -675,8 +755,8 @@ describe("read-only Deye raw adapter", () => {
       }),
     )
 
-    expect(error).toBeInstanceOf(DeyeSchemaError)
-    expect((error as DeyeSchemaError).reason).toBe("payload_too_large")
+    assert.instanceOf(error, DeyeSchemaError)
+    expect(error.reason).toBe("payload_too_large")
     expect(canceled).toBe(true)
     expect(body?.locked).toBe(false)
   })
@@ -684,13 +764,17 @@ describe("read-only Deye raw adapter", () => {
   it("discards a late response body after timeout aborts an ignored fetch", async () => {
     const lateResponse = deferred<Response>()
     let requestSignal: AbortSignal | undefined
+
     const fetch: typeof globalThis.fetch = async (_input, init) => {
       requestSignal = init?.signal ?? undefined
+
       return lateResponse.promise
     }
+
     const client = makeDeyeRequestClient(resolveDeyeConfig(config({ timeoutMs: 1, maxRetries: 0 }))!, {
       fetch,
     })
+
     const request = client.postJson({
       operation: "device_latest",
       path: "/v1.0/device/latest",
@@ -703,9 +787,11 @@ describe("read-only Deye raw adapter", () => {
     expect(requestSignal?.aborted).toBe(true)
 
     let canceled = false
+
     const response = new Response(hangingCancelStream(() => {
       canceled = true
     }), { status: 200 })
+
     const body = response.body
     lateResponse.resolve(response)
     await new Promise<void>((resolve) => setTimeout(resolve, 0))
@@ -717,6 +803,7 @@ describe("read-only Deye raw adapter", () => {
   it("caches tokens per layer invocation and reauthenticates before the safety margin", async () => {
     let now = 0
     const http = fakeFetch([authSuccess("120"), latestSuccess(), latestSuccess(), authSuccess("120"), latestSuccess()])
+
     const layer = makeDeyeLayer(config({ tokenSafetyMarginSeconds: 60 }), {
       fetch: http.fetch,
       now: () => now,
@@ -743,6 +830,7 @@ describe("read-only Deye raw adapter", () => {
       authSuccess(),
       latestSuccess(),
     ])
+
     const layer = makeDeyeLayer(config(), {
       fetch: http.fetch,
       sleep: async () => undefined,
@@ -760,6 +848,7 @@ describe("read-only Deye raw adapter", () => {
   it("composes the full sanitized fixture through the raw Layer and normalizer offline", async () => {
     const adapterNow = Date.parse("2026-10-24T14:15:30.000Z")
     const http = fakeFetch([authSuccess(), response(fixture)])
+
     const layer = makeDeyeLayer(config(), {
       fetch: http.fetch,
       now: () => adapterNow,
@@ -767,7 +856,8 @@ describe("read-only Deye raw adapter", () => {
     })
 
     const raw = await runLatest(layer)
-    const snapshot = normalizeDeyeDeviceLatest(raw as DeyeDeviceLatestResponse, {
+
+    const snapshot = normalizeDeyeDeviceLatest(raw, {
       stationId: "station-internal",
       nowMs: Date.parse("2026-10-24T14:16:00.000Z"),
     })
@@ -793,9 +883,11 @@ describe("read-only Deye raw adapter", () => {
 
   it("fails closed when the regional host or credentials are not configured", async () => {
     let called = false
+
     const layer = makeDeyeLayer(undefined, {
       fetch: async () => {
         called = true
+
         return latestSuccess()
       },
     })

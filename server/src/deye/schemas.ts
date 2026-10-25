@@ -66,21 +66,29 @@ function schemaError(
   return new DeyeSchemaError({ operation, reason })
 }
 
-function parseJson(text: string, operation: DeyeOperation): unknown {
+function decodeJson<S extends Schema.ConstraintDecoder<unknown>>(
+  text: string,
+  operation: DeyeOperation,
+  schema: S,
+  reason: "invalid_envelope" | "invalid_payload",
+): S["Type"] {
+  let value: unknown
+
   try {
-    return JSON.parse(text) as unknown
+    value = JSON.parse(text)
   } catch {
     throw schemaError(operation, "invalid_json")
+  }
+
+  try {
+    return Schema.decodeUnknownSync(schema)(value)
+  } catch {
+    throw schemaError(operation, reason)
   }
 }
 
 function decodeEnvelope(text: string, operation: DeyeOperation): Envelope {
-  const value = parseJson(text, operation)
-  try {
-    return Schema.decodeUnknownSync(EnvelopeSchema)(value)
-  } catch {
-    throw schemaError(operation, "invalid_envelope")
-  }
+  return decodeJson(text, operation, EnvelopeSchema, "invalid_envelope")
 }
 
 function codeString(code: string | number | undefined): string | null {
@@ -91,9 +99,11 @@ function codeFailure(operation: DeyeOperation, code: string | null): DeyeFailure
   if (code !== null && AUTH_CODES.has(code)) {
     return new DeyeAuthError({ operation, status: null, code })
   }
+
   if (code !== null && RATE_LIMIT_CODES.has(code)) {
     return new DeyeRateLimitError({ operation, status: 429, attempts: 1 })
   }
+
   return new DeyeUnavailableError({ operation, status: null, attempts: 1 })
 }
 
@@ -102,6 +112,7 @@ function assertSuccessfulEnvelope(
   operation: DeyeOperation,
 ): void {
   const code = codeString(envelope.code)
+
   if (!envelope.success || (code !== null && code !== DEYE_SUCCESS_CODE)) {
     throw codeFailure(operation, code)
   }
@@ -117,24 +128,22 @@ export interface DecodedTokenResponse {
 
 function parseExpiresIn(value: string): number | null {
   const trimmed = value.trim()
+
   if (!/^\d+$/u.test(trimmed)) return null
   const seconds = Number(trimmed)
+
   return Number.isSafeInteger(seconds) && seconds > 0 ? seconds : null
 }
 
 export function decodeTokenResponse(text: string): DecodedTokenResponse {
   const envelope = decodeEnvelope(text, "token")
   assertSuccessfulEnvelope(envelope, "token")
-  let response: Schema.Schema.Type<typeof TokenResponseSchema>
-  try {
-    response = Schema.decodeUnknownSync(TokenResponseSchema)(parseJson(text, "token"))
-  } catch {
-    throw schemaError("token", "invalid_payload")
-  }
+  const response = decodeJson(text, "token", TokenResponseSchema, "invalid_payload")
 
   const accessToken = response.accessToken?.trim()
   const expiresInSeconds = response.expiresIn === undefined ? null : parseExpiresIn(response.expiresIn)
   const tokenType = response.tokenType?.trim() || "bearer"
+
   if (!accessToken || expiresInSeconds === null || tokenType.toLowerCase() !== "bearer") {
     throw schemaError("token", "invalid_payload")
   }
@@ -158,12 +167,8 @@ export interface DecodedLatestResponse {
 export function decodeLatestResponse(text: string, fetchedAt: string): DeyeLatest {
   const envelope = decodeEnvelope(text, "device_latest")
   assertSuccessfulEnvelope(envelope, "device_latest")
-  let response: Schema.Schema.Type<typeof LatestResponseSchema>
-  try {
-    response = Schema.decodeUnknownSync(LatestResponseSchema)(parseJson(text, "device_latest"))
-  } catch {
-    throw schemaError("device_latest", "invalid_payload")
-  }
+  const response = decodeJson(text, "device_latest", LatestResponseSchema, "invalid_payload")
+
   const deviceDataList: readonly DeyeDeviceLatest[] = (response.deviceDataList ?? []).map(
     (device): DeyeDeviceLatest => ({
       deviceSn: device.deviceSn,
@@ -192,5 +197,6 @@ export function decodeLatestResponse(text: string, fetchedAt: string): DeyeLates
 export function decodeBodyEnvelope(text: string, operation: DeyeOperation): Envelope {
   const envelope = decodeEnvelope(text, operation)
   assertSuccessfulEnvelope(envelope, operation)
+
   return envelope
 }

@@ -37,6 +37,7 @@ describe("conservative freshness and grid evaluation", () => {
     const stored = makeSnapshot({
       measuredAt: "2026-10-24T11:56:59.000Z",
     })
+
     const evaluated = evaluateSnapshot(stored, NOW)
 
     expect(evaluated.freshness.status).toBe("stale")

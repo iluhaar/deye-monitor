@@ -31,7 +31,7 @@ export interface EventPage {
   readonly nextCursor: EventCursor | null
 }
 
-export interface StorageServiceShape {
+export interface TelemetryStore {
   readonly getLatestSnapshot: (
     stationId: string,
   ) => Effect.Effect<TelemetrySnapshot | null, StorageFailure>
@@ -40,7 +40,7 @@ export interface StorageServiceShape {
   ) => Effect.Effect<EventPage, StorageFailure>
 }
 
-export const StorageService = Context.Service<StorageServiceShape>(
+export const StorageService = Context.Service<TelemetryStore>(
   "deye-monitor/StorageService",
 )
 

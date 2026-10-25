@@ -38,6 +38,7 @@ export interface RefreshPollRecord {
 
 export type RefreshPollOutcome = "accepted" | "unverified" | "stale" | "replay" | "backward"
   | "missing_timestamp" | "invalid_timestamp" | "future_timestamp" | "inconsistent_timestamp" | "error"
+
 export type RefreshErrorCategory = RefreshPollOutcome | "auth" | "rate_limit" | "timeout"
   | "invalid_payload" | "unavailable" | "not_configured" | "storage"
 
@@ -52,6 +53,7 @@ function validPolicy(policy: RefreshGuardPolicy): boolean {
 
 function validObservedAt(value: string): boolean {
   const millis = Date.parse(value)
+
   return Number.isFinite(millis) && new Date(millis).toISOString() === value &&
     value.length === 24
 }
@@ -71,6 +73,7 @@ export function makeRefreshGuard(db: D1Database, policy: RefreshGuardPolicy) {
       try: async (): Promise<AcquireRefreshResult> => {
         if (!validPolicy(policy) || stationId.trim() === "") throw new Error("invalid policy")
         const owner = crypto.randomUUID()
+
         const row = await db.prepare(`
           INSERT INTO refresh_guards (
             station_id, operation, lease_owner, fencing_epoch, lease_until,
@@ -92,19 +95,23 @@ export function makeRefreshGuard(db: D1Database, policy: RefreshGuardPolicy) {
         `).bind(stationId, owner, `+${policy.leaseMs / 1000} seconds`,
           `+${policy.minimumIntervalMs / 1000} seconds`)
           .first<{ fencing_epoch: number; lease_until: string }>()
+
         if (row !== null) {
           return { status: "acquired", lease: {
             stationId, operation: "telemetry", owner,
             epoch: row.fencing_epoch, leaseUntil: row.lease_until,
           } }
         }
+
         const blocked = await db.prepare(`
           SELECT lease_until > ${NOW} AS busy,
             MAX(1, CAST(ceil((julianday(MAX(lease_until, next_allowed_at)) -
               julianday('now')) * 86400) AS INTEGER)) AS retry_after
           FROM refresh_guards WHERE station_id = ? AND operation = 'telemetry'
         `).bind(stationId).first<{ busy: number; retry_after: number }>()
+
         if (blocked === null) throw new Error("missing guard")
+
         return {
           status: blocked.busy ? "busy" : "throttled",
           retryAfterSeconds: blocked.retry_after,
@@ -122,6 +129,7 @@ export function makeRefreshGuard(db: D1Database, policy: RefreshGuardPolicy) {
           WHERE station_id = ? AND operation = ? AND lease_owner = ?
             AND fencing_epoch = ? AND lease_until > ${NOW}
         `).bind(lease.stationId, lease.operation, lease.owner, lease.epoch).run()
+
         return result.meta.changes === 1
       },
       catch: () => new RefreshGuardError({ operation: "release" }),
@@ -160,11 +168,13 @@ export function makeRefreshGuard(db: D1Database, policy: RefreshGuardPolicy) {
         if (!validObservedAt(observedAt)) {
           throw new Error("invalid observation time")
         }
+
         const watermark = db.prepare(`
           UPDATE refresh_guards SET last_observed_at = ?, last_observation_key = ?, updated_at = ${NOW}
           WHERE station_id = ? AND operation = ? AND lease_owner = ? AND fencing_epoch = ?
         `).bind(observedAt, observationKey(lease.stationId, observedAt),
           lease.stationId, lease.operation, lease.owner, lease.epoch)
+
         await db.batch([
           assertion(lease, observedAt),
           ...statements,
@@ -188,6 +198,7 @@ export function makeRefreshGuard(db: D1Database, policy: RefreshGuardPolicy) {
           poll.latencyMs < 0 || (poll.measuredAt !== null && !validObservedAt(poll.measuredAt))) {
           throw new Error("invalid poll metadata")
         }
+
         await db.batch([
           assertion(lease),
           db.prepare(`INSERT INTO poll_runs (

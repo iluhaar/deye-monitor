@@ -8,12 +8,12 @@ import type { DeyeLatest, DeyeLatestRequest } from "./types"
  * canonical contract remains the normalized domain snapshot consumed by the
  * existing D1-only routes.
  */
-export interface DeyeRawServiceShape {
+export interface DeyeRawReader {
   readonly readLatest: (
     request: DeyeLatestRequest | string,
   ) => Effect.Effect<DeyeLatest, DeyeFailure>
 }
 
-export const DeyeRawService = Context.Service<DeyeRawServiceShape>(
+export const DeyeRawService = Context.Service<DeyeRawReader>(
   "deye-monitor/DeyeRawService",
 )

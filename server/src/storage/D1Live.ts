@@ -1,14 +1,16 @@
 import type { D1Database } from "@cloudflare/workers-types"
-import { Effect, Schema } from "effect"
+import { Effect, Layer, Schema } from "effect"
 import type { TelemetrySnapshot } from "../domain/telemetry"
 import { MissingBindingError, StorageError } from "../errors/StorageErrors"
+import { StorageService } from "../services/StorageService"
 import type {
   EventPage,
   GridEvent,
-  StorageServiceShape,
+  TelemetryStore,
 } from "../services/StorageService"
 
 const FiniteNumberSchema = Schema.Finite
+
 const BatterySocSchema = FiniteNumberSchema.pipe(
   Schema.check(
     Schema.isGreaterThanOrEqualTo(0),
@@ -46,14 +48,17 @@ const EventRowSchema = Schema.Struct({
   source: Schema.Literals(["deye-cloud"]),
 })
 
+export type SnapshotRow = Schema.Schema.Type<typeof SnapshotRowSchema>
+
+export type EventRow = Schema.Schema.Type<typeof EventRowSchema>
+
 const EvidenceSchema = Schema.Array(Schema.String)
 
 function decodeEvidence(value: string): readonly string[] {
   return Schema.decodeUnknownSync(EvidenceSchema)(JSON.parse(value))
 }
 
-function decodeSnapshotRow(value: unknown): TelemetrySnapshot {
-  const row = Schema.decodeUnknownSync(SnapshotRowSchema)(value)
+function decodeSnapshotRow(row: Schema.Schema.Type<typeof SnapshotRowSchema>): TelemetrySnapshot {
   return {
     source: row.source,
     stationId: row.station_id,
@@ -80,43 +85,52 @@ function decodeSnapshotRow(value: unknown): TelemetrySnapshot {
   }
 }
 
-function canonicalUtcTimestamp(value: string): { value: string; millis: number } {
+function canonicalUtcTimestamp(value: string) {
   const millis = Date.parse(value)
+
   const canonical = Number.isFinite(millis)
     ? new Date(millis).toISOString()
     : null
+
   if (canonical === null || value !== canonical) {
     throw new Error("invalid persisted event timestamp")
   }
+
   return { value: canonical, millis }
 }
 
-function decodeEventRow(value: unknown): GridEvent {
-  const row = Schema.decodeUnknownSync(EventRowSchema)(value)
+function decodeEventRow(row: Schema.Schema.Type<typeof EventRowSchema>): GridEvent {
   if (row.id.trim() === "" || row.station_id.trim() === "") {
     throw new Error("invalid persisted event identity")
   }
 
   const observedAt = canonicalUtcTimestamp(row.observed_at)
+
   const previousObservedAt =
     row.previous_observed_at === null
       ? null
       : canonicalUtcTimestamp(row.previous_observed_at)
+
   const evidence = decodeEvidence(row.evidence_json)
+
   if (evidence.length === 0 || evidence.some((item) => item.trim() === "")) {
     throw new Error("invalid persisted event evidence")
   }
+
   if ((row.previous_status === null) !== (previousObservedAt === null)) {
     throw new Error("incoherent persisted prior event")
   }
+
   if (row.previous_status !== null) {
     if (row.previous_status === row.status) {
       throw new Error("incoherent persisted prior status")
     }
+
     if (previousObservedAt !== null && previousObservedAt.millis > observedAt.millis) {
       throw new Error("incoherent persisted prior timestamp")
     }
   }
+
   return {
     id: row.id,
     stationId: row.station_id,
@@ -133,7 +147,7 @@ function missingBinding(): Effect.Effect<never, MissingBindingError> {
   return Effect.fail(new MissingBindingError({ binding: "DB" }))
 }
 
-export function makeD1Storage(db: D1Database | undefined): StorageServiceShape {
+export function makeD1Storage(db: D1Database | undefined): TelemetryStore {
   if (!db) {
     return {
       getLatestSnapshot: () => missingBinding(),
@@ -163,7 +177,8 @@ export function makeD1Storage(db: D1Database | undefined): StorageServiceShape {
             )
             .bind(stationId)
             .first<unknown>()
-          return row === null ? null : decodeSnapshotRow(row)
+
+          return row === null ? null : decodeSnapshotRow(Schema.decodeUnknownSync(SnapshotRowSchema)(row))
         },
         catch: () => new StorageError({ operation: "read_snapshot" }),
       }),
@@ -178,10 +193,12 @@ export function makeD1Storage(db: D1Database | undefined): StorageServiceShape {
             where.push("observed_at >= ?")
             values.push(query.from)
           }
+
           if (query.to !== null) {
             where.push("observed_at <= ?")
             values.push(query.to)
           }
+
           if (query.cursor !== null) {
             // Newest-first ordering is made deterministic by the event id
             // tie-breaker. The cursor is an exclusive tuple boundary.
@@ -196,6 +213,7 @@ export function makeD1Storage(db: D1Database | undefined): StorageServiceShape {
           }
 
           values.push(query.limit + 1)
+
           const result = await db
             .prepare(
               `SELECT
@@ -209,10 +227,11 @@ export function makeD1Storage(db: D1Database | undefined): StorageServiceShape {
             .bind(...values)
             .all<unknown>()
 
-          const decoded = result.results.map(decodeEventRow)
+          const decoded = result.results.map((row) => decodeEventRow(Schema.decodeUnknownSync(EventRowSchema)(row)))
           const hasNext = decoded.length > query.limit
           const events = hasNext ? decoded.slice(0, query.limit) : decoded
           const last = events.at(-1)
+
           return {
             events,
             nextCursor:
@@ -224,4 +243,8 @@ export function makeD1Storage(db: D1Database | undefined): StorageServiceShape {
         catch: () => new StorageError({ operation: "read_events" }),
       }),
   }
+}
+
+export function d1StorageLayer(db: D1Database | undefined) {
+  return Layer.succeed(StorageService, makeD1Storage(db))
 }

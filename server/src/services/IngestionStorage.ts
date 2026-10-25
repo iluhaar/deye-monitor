@@ -9,7 +9,7 @@ export type IngestionOutcome =
   | "accepted" | "unverified" | "stale" | "replay" | "backward"
   | "missing_timestamp" | "invalid_timestamp" | "future_timestamp" | "inconsistent_timestamp"
 
-export interface IngestionStorageShape {
+export interface IngestionStore {
   readonly acquire: (stationId: string) => Effect.Effect<AcquireRefreshResult, RefreshGuardError>
   readonly release: (lease: RefreshLease) => Effect.Effect<boolean, RefreshGuardError>
   readonly persist: (
@@ -21,4 +21,4 @@ export interface IngestionStorageShape {
   ) => Effect.Effect<void, RefreshGuardError>
 }
 
-export const IngestionStorage = Context.Service<IngestionStorageShape>("deye-monitor/IngestionStorage")
+export const IngestionStorage = Context.Service<IngestionStore>("deye-monitor/IngestionStorage")
