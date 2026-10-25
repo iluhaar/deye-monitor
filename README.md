@@ -1,11 +1,11 @@
 # Deye Monitor
 
 This repository currently contains the documented server plan and the bounded
-start of Phase 2: a Cloudflare Worker using Hono and Effect 4.0.6, the existing
+foundation: a Cloudflare Worker using Hono and Effect 4.0.6, the existing
 conservative normalized-domain evaluator, authenticated read-only API routes,
-and a D1 read layer with initial migrations. A separate read-only Deye adapter
-now provides evidence-backed device/latest normalization; it is not yet wired
-to API reads or live ingestion.
+and a D1 read layer with migrations. A read-only Deye adapter now composes with
+conservative normalization and finite, fenced D1 ingestion. The ingestion
+program is offline-tested but not exposed through an HTTP refresh endpoint.
 
 ## Implementation tracking
 
@@ -16,7 +16,8 @@ Read-only adapter configuration and composition are documented in
 
 The durable refresh guard and atomic observation-write contract are documented
 in [`docs/refresh-protocol.md`](docs/refresh-protocol.md); ingestion and the
-manual refresh endpoint are not yet wired.
+manual refresh endpoint are not connected to Worker entrypoints. Finite program
+composition and outcome semantics are in [`docs/ingestion.md`](docs/ingestion.md).
 
 ## Server development
 
@@ -58,16 +59,19 @@ For local authenticated requests, put `API_BEARER_TOKEN` and the internal
   nullable missing fields, and separate source and fetch times. Grid status
   remains `unknown`/unverified and battery mode remains `unknown`; no approved
   grid classifier is claimed. Zero power is not outage evidence.
-- A read-only Deye adapter and offline adapter/normalization tests now exist,
-  but they are not wired to API reads or live ingestion. No production calls
+- The read-only Deye adapter composes with normalization and finite ingestion,
+  but no Worker entrypoint invokes it yet. No production calls
   have been made, and credentials are not test fixtures. Regional host/config,
   token-lifecycle live checks, polling cadence, power sign semantics, and the
   approved grid classifier still require validation.
-- A durable refresh guard and fenced atomic observation-write boundary exist,
-  with real D1 tests. Live ingestion, the refresh API endpoint, and Cron are not
-  wired; existing API routes remain stored-data reads. No deployment or
-  production readiness is implied.
+- Finite ingestion atomically stores snapshots, poll metadata and verified
+  transition history through the durable refresh guard. The refresh endpoint
+  and Cron are not wired; existing API routes remain stored-data reads. Failed
+  collection degrades effective status without replacing stored measurements.
+  No deployment or production readiness is implied.
 - The migration includes `stations`, `latest_snapshots`, `grid_events`,
   `poll_runs`, and a durable `refresh_guards` table. A second migration adds
-  persisted throttling, observation watermarks, and commit assertions. Neither
-  migration stores credentials or access tokens.
+  persisted throttling, observation watermarks, and commit assertions. A third
+  adds last-confirmed context, gap metadata, and fenced poll outcomes. Apply all
+  migrations before running the Worker. No migration stores credentials or
+  access tokens.

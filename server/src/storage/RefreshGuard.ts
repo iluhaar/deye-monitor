@@ -25,6 +25,22 @@ export interface RefreshGuardPolicy {
   readonly minimumIntervalMs: number
 }
 
+export interface RefreshPollRecord {
+  readonly id: string
+  readonly startedAt: string
+  readonly completedAt: string
+  readonly result: "success" | "stale" | "unavailable" | "error"
+  readonly outcome: RefreshPollOutcome
+  readonly latencyMs: number
+  readonly measuredAt: string | null
+  readonly errorCategory: RefreshErrorCategory | null
+}
+
+export type RefreshPollOutcome = "accepted" | "unverified" | "stale" | "replay" | "backward"
+  | "missing_timestamp" | "invalid_timestamp" | "future_timestamp" | "inconsistent_timestamp" | "error"
+export type RefreshErrorCategory = RefreshPollOutcome | "auth" | "rate_limit" | "timeout"
+  | "invalid_payload" | "unavailable" | "not_configured" | "storage"
+
 // All lock decisions use the database clock, not the invoking isolate's clock.
 const NOW = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
 
@@ -129,8 +145,7 @@ export function makeRefreshGuard(db: D1Database, policy: RefreshGuardPolicy) {
   }
 
   /**
-   * Atomic observation commit. Failure/replay poll metadata needs a separate
-   * fenced metadata-only path in the ingestion implementation (ILL-80).
+   * Atomic observation commit. Failure/replay metadata uses recordPoll instead.
    * Equal/backward/future timestamps reject the WHOLE batch without side effects.
    * Source time is the observation identity: corrections at the same timestamp
    * (including a new mapping revision) cannot invent another physical observation.
@@ -164,5 +179,37 @@ export function makeRefreshGuard(db: D1Database, policy: RefreshGuardPolicy) {
     })
   }
 
-  return { acquire, release, commit }
+  /** Metadata-only writes cannot replace readings or advance observation time. */
+  function recordPoll(lease: RefreshLease, poll: RefreshPollRecord) {
+    return Effect.tryPromise({
+      try: async () => {
+        if (![poll.startedAt, poll.completedAt].every(validObservedAt) ||
+          poll.completedAt < poll.startedAt || !Number.isSafeInteger(poll.latencyMs) ||
+          poll.latencyMs < 0 || (poll.measuredAt !== null && !validObservedAt(poll.measuredAt))) {
+          throw new Error("invalid poll metadata")
+        }
+        await db.batch([
+          assertion(lease),
+          db.prepare(`INSERT INTO poll_runs (
+            id, station_id, window_key, started_at, completed_at, result,
+            latency_ms, upstream_measured_at, error_category, outcome, fencing_epoch, observation_key
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(station_id, window_key) DO NOTHING`)
+            .bind(poll.id, lease.stationId, String(lease.epoch), poll.startedAt,
+              poll.completedAt, poll.result, poll.latencyMs, poll.measuredAt,
+              poll.errorCategory, poll.outcome, lease.epoch,
+              poll.measuredAt === null ? null : observationKey(lease.stationId, poll.measuredAt)),
+          db.prepare(`UPDATE grid_context SET gap_since = COALESCE(gap_since, ?)
+            WHERE station_id = ? AND EXISTS (
+              SELECT 1 FROM poll_runs WHERE station_id = ? AND window_key = ? AND outcome = ?
+            )`).bind(poll.completedAt, lease.stationId, lease.stationId, String(lease.epoch), poll.outcome),
+          assertion(lease),
+          db.prepare("DELETE FROM refresh_commit_checks"),
+        ])
+      },
+      catch: () => new RefreshGuardError({ operation: "commit" }),
+    })
+  }
+
+  return { acquire, release, commit, recordPoll }
 }

@@ -3,9 +3,9 @@ import type { TelemetrySnapshot } from "../domain/telemetry"
 import type { DeyeFailure } from "../errors/DeyeErrors"
 
 /**
- * Read-only normalized upstream boundary. The live adapter currently lives
- * beside this contract and exposes DeyeRawService for separate normalization;
- * the existing API/storage runtime remains D1-only.
+ * Read-only normalized upstream boundary. NormalizedLive composes the raw
+ * adapter and conservative normalizer for opt-in finite ingestion; ordinary
+ * API reads remain D1-only.
  */
 export interface DeyeServiceShape {
   readonly readLatest: (

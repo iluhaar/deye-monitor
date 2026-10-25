@@ -1,7 +1,7 @@
 # Durable refresh write boundary
 
-`server/src/storage/RefreshGuard.ts` provides the D1 protocol used by future
-finite ingestion. It does not enable refresh, call Deye, or change GET routes.
+`server/src/storage/RefreshGuard.ts` provides the D1 protocol used by finite
+ingestion. It does not enable an HTTP refresh endpoint or call Deye itself.
 Apply migrations in order; `0002_refresh_protocol.sql` extends the reserved
 guard without dropping existing rows.
 
@@ -45,9 +45,12 @@ by a newer fetch of the same cloud observation.
 
 Missing/unreliable source time cannot enter the observation write path. Ingestion
 must preserve the last stored snapshot and handle unavailable/replayed/failed
-poll metadata separately. A fenced metadata-only path, typed outcome handling,
-domain validation, last-confirmed context and actual snapshot/event statement
-construction belong to ILL-80. The guard does not certify grid evidence or
+poll metadata separately. `recordPoll` supplies the fenced, idempotent
+metadata-only path; it can mark an existing confirmed context as having a gap,
+but cannot replace a snapshot or advance the observation watermark. It requires
+the third migration. Typed outcomes, domain validation, confirmed context and
+snapshot/event statement construction live in `IngestionLive.ts` (see
+[ingestion.md](./ingestion.md)). The guard does not certify grid evidence or
 implement transition logic. Synthetic verified test events are not approved
 Deye mappings.
 

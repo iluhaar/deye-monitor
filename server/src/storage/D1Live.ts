@@ -32,6 +32,7 @@ const SnapshotRowSchema = Schema.Struct({
   measured_at: Schema.NullOr(Schema.String),
   fetched_at: Schema.String,
   freshness_status: Schema.Literals(["fresh", "stale", "unavailable"]),
+  collection_available: Schema.optionalKey(Schema.Literals([0, 1])),
 })
 
 const EventRowSchema = Schema.Struct({
@@ -72,6 +73,7 @@ function decodeSnapshotRow(value: unknown): TelemetrySnapshot {
     home: { powerW: row.home_power_w },
     measuredAt: row.measured_at,
     fetchedAt: row.fetched_at,
+    collectionAvailable: row.collection_available !== 0,
     // This persisted value is metadata from ingestion. Read handlers replace
     // it with a fresh evaluation before returning data.
     freshness: { status: row.freshness_status, ageSeconds: null },
@@ -150,7 +152,11 @@ export function makeD1Storage(db: D1Database | undefined): StorageServiceShape {
                 grid_confidence, grid_voltage_v, grid_frequency_hz,
                 grid_power_w, battery_soc_percent, battery_power_w,
                 battery_mode, home_power_w, measured_at, fetched_at,
-                freshness_status
+                freshness_status,
+                COALESCE((SELECT CASE WHEN result IN ('error', 'unavailable') THEN 0 ELSE 1 END
+                  FROM poll_runs WHERE poll_runs.station_id = latest_snapshots.station_id
+                  ORDER BY fencing_epoch DESC, completed_at DESC, id DESC LIMIT 1), 1)
+                  AS collection_available
               FROM latest_snapshots
               WHERE station_id = ?
               LIMIT 1`,

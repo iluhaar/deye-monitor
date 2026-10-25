@@ -35,6 +35,8 @@ export interface TelemetrySnapshot {
   readonly home: { readonly powerW: number | null }
   readonly measuredAt: string | null
   readonly fetchedAt: string
+  /** Internal read metadata; false when the latest durable collection failed. */
+  readonly collectionAvailable?: boolean
   /** This value is persisted as metadata only; reads always recompute it. */
   readonly freshness: FreshnessInfo
 }

@@ -99,6 +99,10 @@ export function evaluateSnapshot(
   thresholdSeconds = DEFAULT_FRESHNESS_THRESHOLD_SECONDS,
 ): EvaluatedTelemetrySnapshot {
   const freshness = evaluateFreshness(snapshot, nowMs, thresholdSeconds)
+  if (snapshot.collectionAvailable === false) {
+    return { ...snapshot, grid: { ...snapshot.grid, status: "unknown" },
+      freshness: { status: "unavailable", ageSeconds: freshness.ageSeconds } }
+  }
   const status: TelemetrySnapshot["grid"]["status"] =
     freshness.status === "fresh" && hasVerifiedGridEvidence(snapshot.grid)
       ? snapshot.grid.status
