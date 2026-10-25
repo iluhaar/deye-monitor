@@ -2,6 +2,7 @@ export type GridStatus = "online" | "offline" | "unknown"
 export type GridConfidence = "confirmed" | "unverified"
 export type FreshnessStatus = "fresh" | "stale" | "unavailable"
 export type BatteryMode = "charging" | "discharging" | "idle" | "unknown"
+export type PowerSignConvention = "unverified"
 
 export interface FreshnessInfo {
   readonly status: FreshnessStatus
@@ -26,6 +27,9 @@ export interface BatteryReading {
 export interface TelemetrySnapshot {
   readonly source: "deye-cloud"
   readonly stationId: string
+  /** Optional on legacy stored rows; required on new normalized snapshots. */
+  readonly mappingRevision?: string
+  readonly powerSignConvention?: PowerSignConvention
   readonly grid: GridReading
   readonly battery: BatteryReading
   readonly home: { readonly powerW: number | null }

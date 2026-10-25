@@ -1,13 +1,18 @@
 # Deye Monitor
 
 This repository currently contains the documented server plan and the bounded
-start of Phase 2: a Cloudflare Worker using Hono and Effect 4.0.6, a
-conservative normalized domain evaluator, authenticated read-only API routes,
-and a D1 read layer with initial migrations.
+start of Phase 2: a Cloudflare Worker using Hono and Effect 4.0.6, the existing
+conservative normalized-domain evaluator, authenticated read-only API routes,
+and a D1 read layer with initial migrations. A separate read-only Deye adapter
+now provides evidence-backed device/latest normalization; it is not yet wired
+to API reads or live ingestion.
 
 ## Implementation tracking
 
 Implementation progress and issue status live in the [Linear epic ILL-69 — reliable read-only server MVP](https://linear.app/illiadotdev/issue/ILL-69/epic-deye-monitor-reliable-read-only-server-mvp). [`docs/SERVER_PLAN.md`](docs/SERVER_PLAN.md) and supporting docs are design/evidence references, not completion trackers.
+
+Read-only adapter configuration and composition are documented in
+[`docs/deye-adapter.md`](docs/deye-adapter.md).
 
 ## Server development
 
@@ -45,11 +50,18 @@ For local authenticated requests, put `API_BEARER_TOKEN` and the internal
   `new Date(ms).toISOString()` values; verified events require non-empty
   evidence and coherent prior status/time fields. Invalid rows fail closed as
   sanitized storage errors.
-- Grid state remains `unknown` unless a normalized snapshot explicitly carries
-  confirmed, recognized grid evidence. Zero power is not outage evidence.
-- No live Deye adapter, upstream calls, ingestion workflow, refresh endpoint,
-  Cron trigger, or production D1 identifier is included yet. Regional API
-  behavior and grid-field mappings must be verified before those are added.
+- The current device/latest mapping retains measured voltage and frequency,
+  nullable missing fields, and separate source and fetch times. Grid status
+  remains `unknown`/unverified and battery mode remains `unknown`; no approved
+  grid classifier is claimed. Zero power is not outage evidence.
+- A read-only Deye adapter and offline adapter/normalization tests now exist,
+  but they are not wired to API reads or live ingestion. No production calls
+  have been made, and credentials are not test fixtures. Regional host/config,
+  token-lifecycle live checks, polling cadence, power sign semantics, and the
+  approved grid classifier still require validation.
+- Refresh API endpoint, Cron, and D1 writes are not included in this slice; the
+  existing API remains D1-only. No deployment or production readiness is
+  implied.
 - The migration includes `stations`, `latest_snapshots`, `grid_events`,
   `poll_runs`, and a reserved durable `refresh_guards` table. It stores no
   credentials or access tokens.

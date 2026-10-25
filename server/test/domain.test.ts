@@ -6,12 +6,32 @@ import {
 import { makeSnapshot, NOW } from "./helpers"
 
 describe("conservative freshness and grid evaluation", () => {
-  it("accepts fresh data with explicitly verified grid evidence", () => {
-    const evaluated = evaluateSnapshot(makeSnapshot(), NOW)
+  it.each([
+    ["online", "grid_voltage"],
+    ["online", "grid_frequency"],
+    ["offline", "grid_connected_status"],
+  ] as const)(
+    "accepts a fresh confirmed %s state from %s evidence",
+    (status, evidence) => {
+      const evaluated = evaluateSnapshot(
+        makeSnapshot({
+          grid: {
+            status,
+            confidence: "confirmed",
+            evidence: [evidence],
+            voltageV: status === "online" ? 230 : null,
+            frequencyHz: status === "online" ? 50 : null,
+            powerW: 0,
+          },
+        }),
+        NOW,
+      )
 
-    expect(evaluated.freshness).toEqual({ status: "fresh", ageSeconds: 60 })
-    expect(evaluated.grid.status).toBe("online")
-  })
+      expect(evaluated.freshness).toEqual({ status: "fresh", ageSeconds: 60 })
+      expect(evaluated.grid.status).toBe(status)
+      expect(evaluated.grid.confidence).toBe("confirmed")
+    },
+  )
 
   it("degrades stale data to unknown without mutating the stored snapshot", () => {
     const stored = makeSnapshot({
@@ -67,39 +87,34 @@ describe("conservative freshness and grid evaluation", () => {
     expect(freshness.reason).toBe("inconsistent_timestamp")
   })
 
-  it("does not infer an outage from zero power or unverified evidence", () => {
+  it.each([
+    {
+      reason: "unverified evidence",
+      confidence: "unverified" as const,
+      evidence: ["grid_voltage"],
+      voltageV: 230,
+      frequencyHz: 50,
+      powerW: 250,
+    },
+    {
+      reason: "grid power or zero flow",
+      confidence: "confirmed" as const,
+      evidence: ["grid_power"],
+      voltageV: null,
+      frequencyHz: null,
+      powerW: 0,
+    },
+  ])("does not infer an outage from $reason", (grid) => {
     const evaluated = evaluateSnapshot(
       makeSnapshot({
         grid: {
           status: "offline",
-          confidence: "unverified",
-          evidence: ["grid_power"],
-          voltageV: null,
-          frequencyHz: null,
-          powerW: 0,
+          ...grid,
         },
       }),
       NOW,
     )
 
     expect(evaluated.grid.status).toBe("unknown")
-  })
-
-  it("accepts an explicitly verified offline signal without using power", () => {
-    const evaluated = evaluateSnapshot(
-      makeSnapshot({
-        grid: {
-          status: "offline",
-          confidence: "confirmed",
-          evidence: ["grid_connected_status"],
-          voltageV: null,
-          frequencyHz: null,
-          powerW: 0,
-        },
-      }),
-      NOW,
-    )
-
-    expect(evaluated.grid.status).toBe("offline")
   })
 })

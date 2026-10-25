@@ -3,8 +3,9 @@ import type { TelemetrySnapshot } from "../domain/telemetry"
 import type { DeyeFailure } from "../errors/DeyeErrors"
 
 /**
- * Read-only upstream boundary. Phase 2 defines the contract only; no live
- * adapter is installed until the regional API and field mappings are verified.
+ * Read-only normalized upstream boundary. The live adapter currently lives
+ * beside this contract and exposes DeyeRawService for separate normalization;
+ * the existing API/storage runtime remains D1-only.
  */
 export interface DeyeServiceShape {
   readonly readLatest: (
