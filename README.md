@@ -14,6 +14,10 @@ Implementation progress and issue status live in the [Linear epic ILL-69 — rel
 Read-only adapter configuration and composition are documented in
 [`docs/deye-adapter.md`](docs/deye-adapter.md).
 
+The durable refresh guard and atomic observation-write contract are documented
+in [`docs/refresh-protocol.md`](docs/refresh-protocol.md); ingestion and the
+manual refresh endpoint are not yet wired.
+
 ## Server development
 
 ```sh
@@ -59,9 +63,11 @@ For local authenticated requests, put `API_BEARER_TOKEN` and the internal
   have been made, and credentials are not test fixtures. Regional host/config,
   token-lifecycle live checks, polling cadence, power sign semantics, and the
   approved grid classifier still require validation.
-- Refresh API endpoint, Cron, and D1 writes are not included in this slice; the
-  existing API remains D1-only. No deployment or production readiness is
-  implied.
+- A durable refresh guard and fenced atomic observation-write boundary exist,
+  with real D1 tests. Live ingestion, the refresh API endpoint, and Cron are not
+  wired; existing API routes remain stored-data reads. No deployment or
+  production readiness is implied.
 - The migration includes `stations`, `latest_snapshots`, `grid_events`,
-  `poll_runs`, and a reserved durable `refresh_guards` table. It stores no
-  credentials or access tokens.
+  `poll_runs`, and a durable `refresh_guards` table. A second migration adds
+  persisted throttling, observation watermarks, and commit assertions. Neither
+  migration stores credentials or access tokens.
