@@ -3,6 +3,7 @@ import { Schema } from "effect"
 import { beforeAll, describe, expect, it } from "vitest"
 import { createApp } from "../src/api/app"
 import type { Env } from "../src/env"
+import { rateLimitBindings, TEST_CLIENT_IP } from "./helpers"
 
 const bindings = env
 const db = bindings.DB
@@ -44,7 +45,10 @@ function eventRequest(cursor: string | null): Request {
   if (cursor !== null) params.set("cursor", cursor)
 
   return new Request(`https://example.test/api/v1/events?${params}`, {
-    headers: { Authorization: `Bearer ${readToken}` },
+    headers: {
+      Authorization: `Bearer ${readToken}`,
+      "CF-Connecting-IP": TEST_CLIENT_IP,
+    },
   })
 }
 
@@ -70,6 +74,7 @@ describe("authenticated event pagination over local D1", () => {
     const eventId = (label: string) => `${stationId}-${label}`
 
     const environment: Env = {
+      ...rateLimitBindings,
       DB: db,
       API_BEARER_TOKEN: readToken,
       STATION_ID: stationId,

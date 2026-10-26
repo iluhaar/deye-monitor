@@ -11,6 +11,18 @@
       "migrations_dir": "../migrations"
     }
   ],
+  "ratelimits": [
+    {
+      "name": "API_READ_RATE_LIMITER",
+      "namespace_id": "1001",
+      "simple": { "limit": 120, "period": 60 }
+    },
+    {
+      "name": "API_AUTH_RATE_LIMITER",
+      "namespace_id": "1002",
+      "simple": { "limit": 30, "period": 60 }
+    }
+  ],
   "vars": {
     "FRESHNESS_THRESHOLD_SECONDS": "180"
   }

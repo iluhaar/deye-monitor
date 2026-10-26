@@ -6,7 +6,7 @@ import type { Env } from "../src/env"
 import { RefreshConfigurationError, refreshConfiguration, refreshLayer } from "../src/runtime/refresh"
 import { makePollingService, PollingError, PollingService } from "../src/services/PollingService"
 import type { PollingResult } from "../src/services/PollingService"
-import { emptyStorage, makeSnapshot, NOW } from "./helpers"
+import { emptyStorage, makeSnapshot, NOW, rateLimitBindings, TEST_CLIENT_IP } from "./helpers"
 import { makeIngestionStorage } from "../src/storage/IngestionLive"
 
 const bindings = env
@@ -15,13 +15,17 @@ const readToken = "synthetic-read-token-with-at-least-32-characters"
 const refreshToken = "synthetic-refresh-token-with-at-least-32-characters"
 const headers = { Authorization: `Bearer ${readToken}`, "X-Refresh-Token": refreshToken }
 
-const baseEnv: Env = { API_BEARER_TOKEN: readToken, API_REFRESH_TOKEN: refreshToken,
+const baseEnv: Env = { ...rateLimitBindings, API_BEARER_TOKEN: readToken, API_REFRESH_TOKEN: refreshToken,
   STATION_ID: "synthetic-station", REFRESH_ENABLED: "true" }
 
 beforeAll(async () => { await applyD1Migrations(db, bindings.TEST_MIGRATIONS) })
 
 function request(path = "/api/v1/refresh", init: RequestInit = {}) {
-  return new Request(`https://example.invalid${path}`, { method: "POST", headers, ...init })
+  const requestHeaders = new Headers(init.headers ?? headers)
+
+  if (!requestHeaders.has("CF-Connecting-IP")) requestHeaders.set("CF-Connecting-IP", TEST_CLIENT_IP)
+
+  return new Request(`https://example.invalid${path}`, { method: "POST", ...init, headers: requestHeaders })
 }
 
 function stub(result: PollingResult = { status: "completed", outcome: "unverified", errorCategory: null }) {
@@ -175,7 +179,7 @@ describe("protected manual refresh HTTP boundary", () => {
 })
 
 function configuredEnv(): Env {
-  return { ...baseEnv, DB: db, STATION_ID: crypto.randomUUID(), REFRESH_MIN_INTERVAL_SECONDS: "180",
+  return { ...baseEnv, ...rateLimitBindings, DB: db, STATION_ID: crypto.randomUUID(), REFRESH_MIN_INTERVAL_SECONDS: "180",
     DEYE_BASE_URL: "https://eu1-developer.deyecloud.com", DEYE_APP_ID: "synthetic-app-id",
     DEYE_APP_SECRET: "synthetic-app-secret", DEYE_PASSWORD_HASH: "0".repeat(64),
     DEYE_EMAIL: "synthetic@example.invalid", DEYE_DEVICE_SN: "synthetic-device", DEYE_DEVICE_TYPE: "INVERTER" }
@@ -251,7 +255,7 @@ describe("refresh activation and real D1 integration", () => {
     expect(fake.calls()).toBe(2)
 
     const stored = await app.fetch(new Request("https://example.invalid/api/v1/telemetry",
-      { headers: { Authorization: `Bearer ${readToken}` } }), environment)
+      { headers: { Authorization: `Bearer ${readToken}`, "CF-Connecting-IP": TEST_CLIENT_IP } }), environment)
 
     expect(await stored.json()).toMatchObject({ ok: true, data: { measuredAt: fake.measuredAt } })
     expect(fake.calls()).toBe(2)
@@ -327,7 +331,10 @@ describe("refresh activation and real D1 integration", () => {
     expect(await failed.json()).toEqual({ ok: false,
       error: { code: "UPSTREAM_UNAVAILABLE", message: "Upstream refresh failed" } })
     expect(calls).toBe(4) // One bounded reauthentication, not an infinite loop.
-    const stored = await second.fetch(new Request("https://example.invalid/api/v1/telemetry", { headers }), environment)
+
+    const stored = await second.fetch(new Request("https://example.invalid/api/v1/telemetry",
+      { headers: { ...headers, "CF-Connecting-IP": TEST_CLIENT_IP } }), environment)
+
     expect(await stored.json()).toMatchObject({ data: {
       measuredAt: before.data.telemetry.measuredAt, fetchedAt: before.data.telemetry.fetchedAt,
       grid: { status: "unknown" }, freshness: { status: "unavailable" },

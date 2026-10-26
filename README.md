@@ -20,10 +20,15 @@ composition and outcome semantics are in [`docs/ingestion.md`](docs/ingestion.md
 Manual-refresh configuration and activation are in
 [`docs/manual-refresh.md`](docs/manual-refresh.md).
 
-Deployment security controls, credential rotation, and operator-side Access
-and edge rate-limit requirements are documented in
-[`docs/security.md`](docs/security.md). Access policies and edge rate limits are
-not configured by this repository.
+Worker-side Cloudflare auth/read rate-limit bindings, deployment configuration,
+credential rotation, and separate operator-side Access/WAF/DDoS controls are
+documented in [`docs/security.md`](docs/security.md). The bindings default to 30
+API attempts and 120 authenticated reads per client IP per 60 seconds. Because
+successful reads also count as API attempts, the auth quota is the nominal
+30-per-minute effective read ceiling at these defaults; the quotas are
+independently configurable. Cloudflare limits are approximate per location, not
+exact global quotas. Wrangler source configuration does not prove that a binding
+or external access policy is deployed.
 
 ## Server development
 
@@ -88,6 +93,12 @@ For local authenticated requests, put `API_BEARER_TOKEN` and the internal
 - `POST /api/v1/refresh` additionally requires a distinct `X-Refresh-Token`,
   explicit activation and upstream configuration. It rejects query/body input
   and uses persisted throttling; it is disabled by default.
+- Required Cloudflare Worker bindings rate-limit all `/api/v1/*` attempts and
+  authenticated read routes independently. They use the trusted edge-supplied
+  `CF-Connecting-IP`; missing identity or limiter configuration fails closed.
+  The read limit is separate from the durable D1 refresh throttle. See the
+  [security runbook](docs/security.md) for exact defaults, Wrangler examples,
+  and verification boundaries.
 - Reads use D1 and re-evaluate freshness from measurement and fetch timestamps;
   stored snapshots are not changed by reads. Event pagination is cursor-based,
   range-validated, and deterministic for tied timestamps.

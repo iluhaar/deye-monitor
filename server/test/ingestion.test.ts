@@ -13,7 +13,7 @@ import { ingestionStorageLayer, makeIngestionStorage } from "../src/storage/Inge
 import type { TelemetrySnapshot } from "../src/domain/telemetry"
 import type { RefreshPollRecord } from "../src/storage/RefreshGuard"
 import type { GridEvent } from "../src/services/StorageService"
-import { makeSnapshot } from "./helpers"
+import { makeSnapshot, rateLimitBindings, TEST_CLIENT_IP } from "./helpers"
 import { evaluateSnapshot } from "../src/domain/grid-status"
 import { createApp } from "../src/api/app"
 import { ingestionLayer } from "../src/runtime/ingestion"
@@ -367,8 +367,8 @@ describe("finite ingestion on real D1", () => {
     await f.refresh()
     const app = createApp({ now: () => base + 1000 })
     const token = "synthetic-api-token-with-at-least-32-characters"
-    const environment = { DB: db, API_BEARER_TOKEN: token, STATION_ID: f.id }
-    const headers = { Authorization: `Bearer ${token}` }
+    const environment = { ...rateLimitBindings, DB: db, API_BEARER_TOKEN: token, STATION_ID: f.id }
+    const headers = { Authorization: `Bearer ${token}`, "CF-Connecting-IP": TEST_CLIENT_IP }
     const before = await app.request("http://localhost/api/v1/telemetry", { headers }, environment)
     expect(await before.json()).toMatchObject({ ok: true, data: {
       grid: { status: "online" }, measuredAt: f.input().measuredAt, fetchedAt: f.input().fetchedAt,

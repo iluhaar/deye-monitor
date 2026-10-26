@@ -13,12 +13,13 @@ import type { Env } from "../src/env"
 import { PollingService } from "../src/services/PollingService"
 import { StorageService } from "../src/services/StorageService"
 import type { EventQuery, GridEvent } from "../src/services/StorageService"
-import { makeSnapshot } from "./helpers"
+import { makeSnapshot, rateLimitBindings, TEST_CLIENT_IP } from "./helpers"
 
 const READ_TOKEN = "r".repeat(32)
 const REFRESH_TOKEN = "f".repeat(32)
 
 const env: Env = {
+  ...rateLimitBindings,
   API_BEARER_TOKEN: READ_TOKEN,
   API_REFRESH_TOKEN: REFRESH_TOKEN,
   REFRESH_ENABLED: "true",
@@ -26,7 +27,11 @@ const env: Env = {
 }
 
 function request(path: string, init: RequestInit = {}): Request {
-  return new Request(`https://example.test${path}`, init)
+  const headers = new Headers(init.headers)
+
+  if (!headers.has("CF-Connecting-IP")) headers.set("CF-Connecting-IP", TEST_CLIENT_IP)
+
+  return new Request(`https://example.test${path}`, { ...init, headers })
 }
 
 function authorization(): HeadersInit {

@@ -1,7 +1,9 @@
-import type { D1Database } from "@cloudflare/workers-types"
+import type { D1Database, RateLimit } from "@cloudflare/workers-types"
 
 export interface Env {
   readonly DB?: D1Database
+  readonly API_READ_RATE_LIMITER?: RateLimit
+  readonly API_AUTH_RATE_LIMITER?: RateLimit
   readonly API_BEARER_TOKEN?: string
   /** Additional, distinct secret required only for manual refresh. */
   readonly API_REFRESH_TOKEN?: string

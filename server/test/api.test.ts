@@ -1,7 +1,7 @@
 import { Effect, Schema } from "effect"
 import { describe, expect, it } from "vitest"
 import { createApp } from "../src/api/app"
-import { makeSnapshot, NOW, authenticatedEnv, authorizationHeaders, emptyStorage, storageLayer } from "./helpers"
+import { makeSnapshot, NOW, authenticatedEnv, authorizationHeaders, emptyStorage, rateLimitBindings, storageLayer, TEST_CLIENT_IP } from "./helpers"
 import type { EventQuery, TelemetryStore } from "../src/services/StorageService"
 
 async function readJson(response: Response) {
@@ -9,7 +9,11 @@ async function readJson(response: Response) {
 }
 
 function request(path: string, headers?: HeadersInit) {
-  return new Request(`https://example.test${path}`, { headers })
+  const requestHeaders = new Headers(headers)
+
+  if (!requestHeaders.has("CF-Connecting-IP")) requestHeaders.set("CF-Connecting-IP", TEST_CLIENT_IP)
+
+  return new Request(`https://example.test${path}`, { headers: requestHeaders })
 }
 
 describe("authenticated read API", () => {
@@ -31,7 +35,7 @@ describe("authenticated read API", () => {
 
     const response = await app.fetch(
       request("/api/v1/status", authorizationHeaders()),
-      { STATION_ID: "station-1" },
+      { ...rateLimitBindings, STATION_ID: "station-1" },
     )
 
     expect(response.status).toBe(401)

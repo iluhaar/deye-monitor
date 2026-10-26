@@ -1,6 +1,7 @@
-import { Effect, Layer, Predicate } from "effect"
+import { Effect, Layer, Predicate, Schema } from "effect"
 import { Hono } from "hono"
 import type { Context } from "hono"
+import { isIP } from "node:net"
 import type { Env } from "../env"
 import {
   DEFAULT_FRESHNESS_THRESHOLD_SECONDS,
@@ -63,6 +64,19 @@ const MAX_EVENTS_PAGE_SIZE = 100
 const MAX_PUBLIC_EVIDENCE_COUNT = 16
 const MAX_PUBLIC_EVIDENCE_LENGTH = 64
 const MAX_EVENTS_RESPONSE_BYTES = 1_000_000
+const MAX_CLIENT_IP_LENGTH = 45
+
+const RATE_LIMITED_RESPONSE = {
+  ok: false,
+  error: { code: "RATE_LIMITED", message: "Too many requests" },
+} as const
+
+const RATE_LIMIT_UNAVAILABLE_RESPONSE = {
+  ok: false,
+  error: { code: "RATE_LIMIT_UNAVAILABLE", message: "Service temporarily unavailable" },
+} as const
+
+const RateLimitOutcomeSchema = Schema.Struct({ success: Schema.Boolean })
 
 function success<T>(data: T): JsonSuccess<T> {
   return { ok: true, data }
@@ -70,6 +84,39 @@ function success<T>(data: T): JsonSuccess<T> {
 
 function failure(code: string, message: string): JsonFailure {
   return { ok: false, error: { code, message } }
+}
+
+type RateLimitBindingName = "API_AUTH_RATE_LIMITER" | "API_READ_RATE_LIMITER"
+
+async function enforceRateLimit(
+  context: Context<{ Bindings: Env }>,
+  bindingName: RateLimitBindingName,
+): Promise<Response | null> {
+  try {
+    const ip = context.req.raw.headers.get("CF-Connecting-IP")
+
+    if (ip === null || ip.length > MAX_CLIENT_IP_LENGTH || isIP(ip) === 0) {
+      return context.json(RATE_LIMIT_UNAVAILABLE_RESPONSE, 503)
+    }
+
+    const binding = context.env?.[bindingName]
+
+    if (binding === undefined || binding === null) {
+      return context.json(RATE_LIMIT_UNAVAILABLE_RESPONSE, 503)
+    }
+
+    const outcome: unknown = await binding.limit({ key: ip })
+
+    if (!Schema.is(RateLimitOutcomeSchema)(outcome)) {
+      return context.json(RATE_LIMIT_UNAVAILABLE_RESPONSE, 503)
+    }
+
+    return outcome.success
+      ? null
+      : context.json(RATE_LIMITED_RESPONSE, 429)
+  } catch {
+    return context.json(RATE_LIMIT_UNAVAILABLE_RESPONSE, 503)
+  }
 }
 
 function thresholdSeconds(env: Env): number {
@@ -291,6 +338,13 @@ export function createApp(options: AppOptions = {}) {
 
     await next()
   })
+  app.use("/api/v1/*", async (context, next) => {
+    const response = await enforceRateLimit(context, "API_AUTH_RATE_LIMITER")
+
+    if (response !== null) return response
+
+    await next()
+  })
   app.use("/api/v1/*", requireBearerToken)
   app.use("/api/v1/refresh", requireRefreshToken)
   app.use("/api/v1/*", async (context, next) => {
@@ -317,6 +371,20 @@ export function createApp(options: AppOptions = {}) {
         return context.json(failure("INVALID_QUERY", "Invalid events query"), 400)
       }
     }
+
+    await next()
+  })
+  app.use("/api/v1/*", async (context, next) => {
+    if (!readPaths.has(context.req.path) ||
+      (context.req.method !== "GET" && context.req.method !== "HEAD")) {
+      await next()
+
+      return
+    }
+
+    const response = await enforceRateLimit(context, "API_READ_RATE_LIMITER")
+
+    if (response !== null) return response
 
     await next()
   })

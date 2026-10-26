@@ -29,6 +29,21 @@ URL returns `414 REQUEST_TOO_LARGE` before authentication. Responses use the
 existing JSON envelope and `Cache-Control: no-store`.
 After read authentication they vary on both `Authorization` and `X-Refresh-Token`.
 Cross-origin access is not enabled.
+Every `/api/v1/*` attempt, including refresh and successful requests, also counts
+against the required per-client `API_AUTH_RATE_LIMITER` before credential
+validation. Refresh is not a read route and does not consume
+`API_READ_RATE_LIMITER`; authenticated read `GET`/`HEAD` routes use that separate
+quota. The auth and read bindings use trusted `CF-Connecting-IP` only. The auth
+quota counts successful reads too, so its default 30 attempts/minute is the
+nominal effective per-client read ceiling despite the separate 120 reads/minute
+quota. The quotas are independently configurable in Wrangler JSONC.
+Quota denial is `429 RATE_LIMITED` without `Retry-After`; missing/invalid client
+identity or an unavailable, malformed or failing binding fails closed with
+`503 RATE_LIMIT_UNAVAILABLE` before protected storage or upstream calls. These
+Worker quotas do not change token requirements/rotation or upstream collection
+behavior, and do not replace refresh's independent persisted D1 interval and
+lease. See the [security runbook](./security.md) for configuration and staging
+verification details.
 See the [security runbook](./security.md) for detailed request/public-output
 bounds and validation ordering.
 Do not put credentials in URLs, command history, source control or logs; use an
@@ -55,6 +70,8 @@ belong in Wrangler secret bindings. The Worker does not automatically import
 | `API_REFRESH_TOKEN` | Distinct secret refresh credential, 32–4096 non-whitespace characters |
 | `REFRESH_ENABLED` | Exactly `true` to activate; unset/other values disable refresh |
 | `REFRESH_MIN_INTERVAL_SECONDS` | Explicit integer `1..3600`; no default is inferred |
+| `API_AUTH_RATE_LIMITER` | Required Cloudflare simple rate-limit binding; default 30 `/api/v1/*` attempts per 60 seconds |
+| `API_READ_RATE_LIMITER` | Required Cloudflare simple rate-limit binding; default 120 authenticated read requests per 60 seconds |
 | `DEYE_BASE_URL` | Explicit HTTPS regional base URL validated for the account |
 | `DEYE_APP_ID`, `DEYE_APP_SECRET` | Developer application credentials, stored as secrets |
 | `DEYE_PASSWORD_HASH` | Secret lowercase 64-character SHA-256 password digest, not plaintext |
@@ -109,15 +126,22 @@ Errors use `{ "ok": false, "error": { "code": "...", "message": "..." } }`:
 | `401` / `403` | `UNAUTHORIZED` / `FORBIDDEN` | Read / refresh authorization denied |
 | `429` | `REFRESH_IN_PROGRESS` | A durable lease is active |
 | `429` | `REFRESH_THROTTLED` | Persisted minimum interval has not elapsed |
+| `429` | `RATE_LIMITED` | Cloudflare auth quota exceeded; static sanitized response, no `Retry-After` |
 | `502` | `UPSTREAM_UNAVAILABLE` | Sanitized upstream auth, decoding or transport failure |
 | `503` | `SERVICE_NOT_CONFIGURED` | Refresh disabled or incomplete configuration |
+| `503` | `RATE_LIMIT_UNAVAILABLE` | Required rate-limit binding missing, malformed or failed, or trusted client identity missing/invalid; no protected storage/upstream calls |
 | `503` | `UPSTREAM_RATE_LIMITED` | Deye rejected collection due to rate limiting |
 | `503` | `STORAGE_UNAVAILABLE` | Durable state could not be safely acquired, written or read |
 | `504` | `REFRESH_TIMEOUT` | Finite collection budget exceeded |
 
-Both local `429` outcomes include a positive integer `Retry-After` in seconds.
-They do not perform upstream requests. Failed upstream attempts also consume
-the persisted minimum interval. There is no bypass or in-memory-only throttle.
+The D1 `REFRESH_IN_PROGRESS` and `REFRESH_THROTTLED` outcomes include a positive
+integer `Retry-After` in seconds and do not perform upstream requests.
+`RATE_LIMITED` does not include `Retry-After`: the Cloudflare binding returns no
+reset metadata. A binding-denied request makes no protected storage or upstream
+calls. Failed upstream attempts also consume the persisted minimum interval;
+there is no bypass or in-memory-only D1 throttle. Cloudflare's per-client limits
+are approximate per location, not exact global quotas; shared-NAT clients share
+the same IP quota. They do not replace Access, WAF, or DDoS controls.
 
 The runtime lease budget covers two token issuances, two latest-data requests,
 their worst-case configured retries/backoff, and storage/finalization headroom.
