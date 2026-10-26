@@ -426,7 +426,8 @@ export function makeDeyeRequestClient(
   config: ResolvedDeyeConfig,
   runtime: DeyeRuntime,
 ): DeyeRequestClient {
-  const fetchImplementation = runtime.fetch ?? globalThis.fetch
+  // Workerd requires its native fetch receiver to remain the global object.
+  const fetchImplementation = runtime.fetch ?? globalThis.fetch.bind(globalThis)
 
   const sleep: NonNullable<DeyeRuntime["sleep"]> =
     runtime.sleep ??
@@ -542,6 +543,7 @@ export function makeDeyeRequestClient(
         }
 
         if (parameters.signal?.aborted) throw new RequestCancelledSignal()
+
         const statusFailure = classifyHttpStatus(parameters.operation, result.status)
 
         if (statusFailure !== null) throw statusFailure

@@ -452,6 +452,52 @@ describe("bounded authenticated API contract", () => {
     expect(harness.snapshotReads()).toBe(0)
   })
 
+  it("accepts a zero-length HTTP refresh stream without reading it", async () => {
+    const harness = makeHarness()
+
+    const pending = request("/api/v1/refresh", {
+      method: "POST",
+      headers: {
+        ...authorization(),
+        "X-Refresh-Token": REFRESH_TOKEN,
+        "Content-Length": "0",
+      },
+      body: "",
+    })
+
+    expect(pending.body).not.toBeNull()
+
+    const response = await harness.app.fetch(pending, env)
+
+    expect(response.status).toBe(200)
+    expect(harness.refreshCalls()).toBe(1)
+    expect(pending.bodyUsed).toBe(false)
+  })
+
+  it("rejects chunked refresh framing even when Content-Length is zero", async () => {
+    const harness = makeHarness()
+
+    const response = await harness.app.fetch(
+      request("/api/v1/refresh", {
+        method: "POST",
+        headers: {
+          ...authorization(),
+          "X-Refresh-Token": REFRESH_TOKEN,
+          "Content-Length": "0",
+          "Transfer-Encoding": "chunked",
+        },
+      }),
+      env,
+    )
+
+    expect(response.status).toBe(400)
+    expect(await response.json()).toEqual({
+      ok: false,
+      error: { code: "INVALID_REFRESH_REQUEST", message: "Refresh accepts no query or body" },
+    })
+    expect(harness.refreshCalls()).toBe(0)
+  })
+
   it("preserves refresh authentication failures before body contract handling", async () => {
     const harness = makeHarness()
 

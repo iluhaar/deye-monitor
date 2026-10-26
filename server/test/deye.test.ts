@@ -1,5 +1,5 @@
 import { Effect, Fiber, Schema } from "effect"
-import { assert, describe, expect, it } from "vitest"
+import { assert, describe, expect, it, vi } from "vitest"
 import fixture from "./fixtures/deye-device-latest.json"
 import {
   normalizeDeyeDeviceLatest,
@@ -160,6 +160,25 @@ async function rejected<A>(promise: Promise<A>): Promise<Error> {
 }
 
 describe("read-only Deye raw adapter", () => {
+  it("preserves the required global receiver for the default fetch", async () => {
+    const http = fakeFetch([authSuccess(), latestSuccess()])
+
+    vi.stubGlobal("fetch", function (this: typeof globalThis, ...args: Parameters<typeof fetch>) {
+      if (this !== globalThis) throw new TypeError("Illegal invocation")
+
+      return http.fetch(...args)
+    })
+
+    try {
+      const result = await runLatest(makeDeyeLayer(config({ timeoutMs: 1000, maxRetries: 0 })))
+
+      expect(result.success).toBe(true)
+      expect(http.calls).toHaveLength(2)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it("fails the rejection helper when an effect unexpectedly succeeds", async () => {
     await expect(rejected(Promise.resolve("unexpected success")))
       .rejects.toThrow("expected the Effect to fail")

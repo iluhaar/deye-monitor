@@ -291,15 +291,15 @@ function hasQuery(requestUrl: string): boolean {
 }
 
 function requestHasBody(request: Request): boolean {
-  if (request.body !== null || request.headers.has("Transfer-Encoding")) return true
+  if (request.headers.has("Transfer-Encoding")) return true
 
   const contentLength = request.headers.get("Content-Length")
 
-  if (contentLength === null) return false
+  // Workerd exposes an empty stream for HTTP POSTs framed with Content-Length: 0.
+  // HTTP framing establishes emptiness; do not read or drain a request stream.
+  if (contentLength !== null) return contentLength !== "0"
 
-  if (contentLength.length > 20 || !/^(?:0|[1-9]\d*)$/u.test(contentLength)) return true
-
-  return contentLength !== "0"
+  return request.body !== null
 }
 
 function discardRequestBody(request: Request): void {
