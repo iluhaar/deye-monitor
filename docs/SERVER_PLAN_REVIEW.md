@@ -23,7 +23,7 @@ Phase 1 cannot pass from public research alone. The target account, regional hos
 | Quotas | Public Best Practices currently shows preliminary 100,000 calls/month, 60 QPM, and 1–2 minute polling guidance; it says figures may change and HTTP 429 can result | Treat these as operating guidance, not a contract. Confirm application/account limits and response headers before choosing Phase 5 cadence. |
 | Swagger quality | The downloaded `/v2/api-docs` is Swagger 2.0 but contains malformed JSON in a public example (`[12583SS]`) | Validate the document before generation and retain handwritten runtime decoding for fields whose published types/examples conflict. |
 
-The full path and field inventory is in `deye-field-validation.md`. It intentionally contains no live fixture or production mapping.
+The full path and field inventory is in `deye-field-validation.md`. An operator-supplied sanitized actual sample and advertised point inventory are available, but there is no validated production mapping or independently reviewed grid evidence.
 
 ## Required plan changes before implementation
 

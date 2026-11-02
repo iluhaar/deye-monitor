@@ -18,6 +18,8 @@ function normalizeConfig(configPath: string): Unstable_Config {
     ...config,
     configPath: "<config>",
     userConfigPath: "<config>",
+    // Named deployment environments are metadata, not default test bindings.
+    definedEnvironments: [],
     d1_databases: (config.d1_databases ?? []).map((database) => ({
       ...database,
       database_name: "<isolated-test-database>",

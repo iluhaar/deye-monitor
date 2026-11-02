@@ -161,6 +161,54 @@ describe("bounded authenticated API contract", () => {
     expect(harness.snapshotReads()).toBe(0)
   })
 
+  it("denies cross-origin preflights without granting CORS or reaching protected services", async () => {
+    const harness = makeHarness()
+
+    const preflightHeaders = {
+      Origin: "https://untrusted.example",
+      "Access-Control-Request-Method": "GET",
+      "Access-Control-Request-Headers": "authorization, x-refresh-token",
+    }
+
+    const cases = [
+      { path: "/api/v1/status", headers: preflightHeaders, status: 401 },
+      {
+        path: "/api/v1/status",
+        headers: { ...preflightHeaders, Authorization: `Bearer ${READ_TOKEN}` },
+        status: 404,
+      },
+      {
+        path: "/api/v1/refresh",
+        headers: { ...preflightHeaders, Authorization: `Bearer ${READ_TOKEN}` },
+        status: 403,
+      },
+      {
+        path: "/api/v1/refresh",
+        headers: {
+          ...preflightHeaders,
+          Authorization: `Bearer ${READ_TOKEN}`,
+          "X-Refresh-Token": REFRESH_TOKEN,
+        },
+        status: 404,
+      },
+    ] as const
+
+    for (const testCase of cases) {
+      const response = await harness.app.fetch(
+        request(testCase.path, { method: "OPTIONS", headers: testCase.headers }),
+        env,
+      )
+
+      expect(response.status, testCase.path).toBe(testCase.status)
+      expect(response.headers.get("Access-Control-Allow-Origin")).toBeNull()
+      expect(response.headers.get("Access-Control-Allow-Credentials")).toBeNull()
+    }
+
+    expect(harness.snapshotReads()).toBe(0)
+    expect(harness.eventReads()).toBe(0)
+    expect(harness.refreshCalls()).toBe(0)
+  })
+
   it("bounds the complete URL and query before authentication", async () => {
     const harness = makeHarness()
     const overlongQuery = `?${"x".repeat(MAX_API_QUERY_LENGTH + 1)}`
@@ -581,5 +629,47 @@ describe("bounded authenticated API contract", () => {
       error: { code: "INVALID_REFRESH_REQUEST", message: "Refresh accepts no query or body" },
     })
     expect(harness.refreshCalls()).toBe(0)
+  })
+
+  it("accepts only the replaced read/refresh pair after a local credential cutover", async () => {
+    const oldReadToken = "o".repeat(32)
+    const oldRefreshToken = "p".repeat(32)
+    const newReadToken = "n".repeat(32)
+    const newRefreshToken = "q".repeat(32)
+    const before = { ...env, API_BEARER_TOKEN: oldReadToken, API_REFRESH_TOKEN: oldRefreshToken }
+    const after = { ...env, API_BEARER_TOKEN: newReadToken, API_REFRESH_TOKEN: newRefreshToken }
+    const harness = makeHarness()
+
+    const status = (token: string, config: Env) => harness.app.fetch(
+      request("/api/v1/status", { headers: { Authorization: `Bearer ${token}` } }),
+      config,
+    )
+
+    const refresh = (readToken: string | undefined, refreshToken: string | undefined, config: Env) => {
+      const headers = new Headers()
+
+      if (readToken !== undefined) headers.set("Authorization", `Bearer ${readToken}`)
+
+      if (refreshToken !== undefined) headers.set("X-Refresh-Token", refreshToken)
+
+      return harness.app.fetch(request("/api/v1/refresh", { method: "POST", headers }), config)
+    }
+
+    expect((await status(oldReadToken, before)).status).toBe(200)
+    expect((await refresh(oldReadToken, oldRefreshToken, before)).status).toBe(200)
+
+    expect((await status(newReadToken, after)).status).toBe(200)
+    expect((await refresh(newReadToken, newRefreshToken, after)).status).toBe(200)
+
+    expect((await status(oldReadToken, after)).status).toBe(401)
+    expect((await refresh(oldReadToken, oldRefreshToken, after)).status).toBe(401)
+    expect((await refresh(newReadToken, oldRefreshToken, after)).status).toBe(403)
+    expect((await refresh(oldReadToken, newRefreshToken, after)).status).toBe(401)
+    expect((await refresh(newReadToken, undefined, after)).status).toBe(403)
+    expect((await refresh(undefined, newRefreshToken, after)).status).toBe(401)
+    expect((await refresh(newReadToken, newReadToken, after)).status).toBe(403)
+
+    expect(harness.snapshotReads()).toBe(4)
+    expect(harness.refreshCalls()).toBe(2)
   })
 })

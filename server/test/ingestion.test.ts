@@ -49,6 +49,23 @@ interface StoredGridContext {
 
 beforeAll(async () => { await applyD1Migrations(db, bindings.TEST_MIGRATIONS) })
 
+async function seedRetentionHistory(id: string) {
+  for (const [label, age] of [["expired", "-13 hours"], ["recent", "-11 hours"]] as const) {
+    await db.batch([
+      db.prepare(`INSERT INTO poll_runs (id, station_id, window_key, started_at, completed_at,
+        result, latency_ms, outcome, fencing_epoch) VALUES (?, ?, ?,
+        strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?), strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?),
+        'success', 0, 'unverified', 0)`)
+        .bind(`${id}-${label}-poll`, id, label, age, age),
+      db.prepare(`INSERT INTO grid_events (id, station_id, status, observed_at, evidence_json,
+        source, idempotency_key, created_at) VALUES (?, ?, 'offline',
+        strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?), '["grid_voltage"]', 'deye-cloud', ?,
+        strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?))`)
+        .bind(`${id}-${label}-event`, id, age, `${id}-${label}`, age),
+    ])
+  }
+}
+
 async function fixture() {
   const id = crypto.randomUUID()
   await db.prepare(`INSERT INTO stations (id, source, mapping_revision, created_at, updated_at)
@@ -95,6 +112,92 @@ async function fixture() {
 }
 
 describe("finite ingestion on real D1", () => {
+  it.each(["success", "failure", "replay", "missing"] as const)(
+    "prunes history older than 12 hours during %s without deleting recent or other-station state", async (mode) => {
+      const f = await fixture()
+      const other = await fixture()
+      await f.refresh()
+      const watermark = f.input().measuredAt
+      await seedRetentionHistory(f.id)
+      await seedRetentionHistory(other.id)
+      await f.next("online")
+
+      if (mode === "failure") f.fail(Effect.fail(new DeyeUnavailableError({
+        operation: "device_latest", status: 503, attempts: 1,
+      })))
+
+      if (mode === "replay") f.setInput({ ...f.input(), measuredAt: watermark })
+
+      if (mode === "missing") f.setInput({ ...f.input(), measuredAt: null })
+
+      expect((await f.refresh()).status).toBe("completed")
+      expect(await db.prepare("SELECT id FROM poll_runs WHERE id=?")
+        .bind(`${f.id}-expired-poll`).first()).toBeNull()
+      expect(await db.prepare("SELECT id FROM grid_events WHERE id=?")
+        .bind(`${f.id}-expired-event`).first()).toBeNull()
+      expect(await db.prepare("SELECT id FROM poll_runs WHERE id=?")
+        .bind(`${f.id}-recent-poll`).first()).not.toBeNull()
+      expect(await db.prepare("SELECT id FROM grid_events WHERE id=?")
+        .bind(`${f.id}-recent-event`).first()).not.toBeNull()
+      expect((await other.polls()).results).toHaveLength(2)
+      expect((await other.events()).results).toHaveLength(2)
+      expect(await f.snapshot()).not.toBeNull()
+      expect(await f.context()).toMatchObject({ status: "online" })
+
+      const guard = await db.prepare("SELECT fencing_epoch, last_observed_at FROM refresh_guards WHERE station_id=?")
+        .bind(f.id).first()
+
+      expect(guard).toMatchObject({ fencing_epoch: 2,
+        last_observed_at: mode === "success" ? f.input().measuredAt : watermark })
+      expect((await f.polls()).results).toHaveLength(3)
+    },
+  )
+
+  it("cannot prune history when an ingestion worker loses its lease", async () => {
+    const f = await fixture()
+    await seedRetentionHistory(f.id)
+
+    const delayed: DeyeReader = { readLatest: () => Effect.tryPromise({
+      try: async () => {
+        await db.prepare("UPDATE refresh_guards SET lease_until=? WHERE station_id=?")
+          .bind(iso(base - 1000), f.id).run()
+
+        return f.input()
+      },
+      catch: () => new DeyeUnavailableError({ operation: "device_latest", status: null, attempts: 1 }),
+    }) }
+
+    await expect(Effect.runPromise(makePollingService(delayed, f.storage, options, () => base).refresh(f.id)))
+      .rejects.toMatchObject(new PollingError({ category: "storage" }))
+    expect((await f.polls()).results).toHaveLength(2)
+    expect((await f.events()).results).toHaveLength(2)
+    expect(await f.snapshot()).toBeNull()
+  })
+
+  it("rolls history deletion and observation writes back together if cleanup fails", async () => {
+    const f = await fixture()
+    await f.refresh()
+    const original = await f.snapshot()
+    const context = await f.context()
+    await seedRetentionHistory(f.id)
+    await f.next("offline")
+    const trigger = `reject_cleanup_${f.id.replaceAll("-", "")}`
+    await db.prepare(`CREATE TRIGGER ${trigger} BEFORE DELETE ON grid_events
+      WHEN OLD.station_id = '${f.id}' BEGIN SELECT RAISE(ABORT, 'synthetic cleanup failure'); END`).run()
+
+    try {
+      await expect(f.refresh()).rejects.toMatchObject(new PollingError({ category: "storage" }))
+      expect(await f.snapshot()).toEqual(original)
+      expect(await f.context()).toEqual(context)
+      expect((await f.events()).results).toHaveLength(2)
+      expect((await f.polls()).results).toHaveLength(3)
+      expect(await db.prepare("SELECT id FROM poll_runs WHERE id=?")
+        .bind(`${f.id}-expired-poll`).first()).not.toBeNull()
+    } finally {
+      await db.prepare(`DROP TRIGGER ${trigger}`).run()
+    }
+  })
+
   it("persists a first confirmed baseline without inventing a transition", async () => {
     const f = await fixture()
     expect(await f.refresh()).toEqual({ status: "completed", outcome: "accepted", errorCategory: null })

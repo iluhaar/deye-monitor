@@ -25,5 +25,32 @@
   ],
   "vars": {
     "FRESHNESS_THRESHOLD_SECONDS": "180"
+  },
+  "env": {
+    "production": {
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "deye-monitor-production",
+          "database_id": "d7c16581-ffbc-43ec-b048-21c3af81fdb8",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "ratelimits": [
+        {
+          "name": "API_READ_RATE_LIMITER",
+          "namespace_id": "1001",
+          "simple": { "limit": 120, "period": 60 }
+        },
+        {
+          "name": "API_AUTH_RATE_LIMITER",
+          "namespace_id": "1002",
+          "simple": { "limit": 30, "period": 60 }
+        }
+      ],
+      "vars": {
+        "FRESHNESS_THRESHOLD_SECONDS": "180"
+      }
+    }
   }
 }

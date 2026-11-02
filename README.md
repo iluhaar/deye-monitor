@@ -20,6 +20,10 @@ composition and outcome semantics are in [`docs/ingestion.md`](docs/ingestion.md
 Manual-refresh configuration and activation are in
 [`docs/manual-refresh.md`](docs/manual-refresh.md).
 
+Poll and grid-event history use a 12-hour window, pruned on refresh; current
+readings and refresh-safety state are retained. This is request-driven cleanup,
+not an automatic TTL while idle. See [`docs/retention.md`](docs/retention.md).
+
 Worker-side Cloudflare auth/read rate-limit bindings, deployment configuration,
 credential rotation, and separate operator-side Access/WAF/DDoS controls are
 documented in [`docs/security.md`](docs/security.md). The bindings default to 30

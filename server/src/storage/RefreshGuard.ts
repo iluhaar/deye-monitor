@@ -190,7 +190,9 @@ export function makeRefreshGuard(db: D1Database, policy: RefreshGuardPolicy) {
   }
 
   /** Metadata-only writes cannot replace readings or advance observation time. */
-  function recordPoll(lease: RefreshLease, poll: RefreshPollRecord) {
+  function recordPoll(
+    lease: RefreshLease, poll: RefreshPollRecord, statements: readonly D1PreparedStatement[] = [],
+  ) {
     return Effect.tryPromise({
       try: async () => {
         if (![poll.startedAt, poll.completedAt].every(validObservedAt) ||
@@ -214,6 +216,7 @@ export function makeRefreshGuard(db: D1Database, policy: RefreshGuardPolicy) {
             WHERE station_id = ? AND EXISTS (
               SELECT 1 FROM poll_runs WHERE station_id = ? AND window_key = ? AND outcome = ?
             )`).bind(poll.completedAt, lease.stationId, lease.stationId, String(lease.epoch), poll.outcome),
+          ...statements,
           assertion(lease),
           db.prepare("DELETE FROM refresh_commit_checks"),
         ])

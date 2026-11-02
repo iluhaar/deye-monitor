@@ -1,17 +1,17 @@
 # Deye field validation — Phase 1 public-contract research
 
-**Status:** provisional public-contract inventory, not live-device validation
+**Status:** provisional public-contract inventory with operator-supplied sample/inventory; no validated grid mapping
 **Research date:** 2026-10-24
-**Target named by the plan:** Deye SUN-6K-SG06LP1-EU-BM2; the target account, device, firmware, and measurements were not accessed.
+**Target named by the plan:** Deye SUN-6K-SG06LP1-EU-BM2. The agent made no live calls or account/device access; the repository includes an operator-supplied sanitized actual `device/latest` sample and exact advertised point inventory.
 
 ## Scope and non-claims
 
-This document records what can be established from public Deye documentation only. No Deye credentials, developer account, live account, station, device, or telemetry were used. Therefore:
+Public-contract statements in this document come from Deye documentation. No credentials or live account/device were accessed by the agent. Separately, the repository contains the operator-supplied sanitized actual sample and advertised point inventory noted above. Therefore:
 
-- There is no verified production field mapping or sanitized live fixture yet.
-- No value below is an observed measurement from the target inverter.
+- There is no verified production field mapping or independently reviewed live grid validation; the supplied sample and point inventory do not establish grid semantics.
+- Public documentation examples below are not target measurements. The separately supplied actual upstream sample is provisional evidence, not a validated grid observation.
 - A public example is not evidence that the same field exists on the target device.
-- Grid state remains `unknown` until the live checklist below proves a direct signal. In particular, zero import/export power is not evidence of grid absence.
+- Grid state remains `unknown` until the checklist below proves a direct signal against independent ground truth. In particular, zero import/export power is not evidence of grid absence.
 
 ## Sources and retrieval record
 
@@ -102,7 +102,7 @@ The Swagger also publishes configuration, station-creation/logger-registration, 
 
 ## Grid-signal inventory — unverified
 
-There is no live evidence in this repository. The table deliberately does **not** choose a production mapping.
+The repository includes an operator-supplied sanitized actual `device/latest` sample and exact advertised point inventory; the agent made no live calls. The sample's receive-time and independent ground-truth alignment are absent, so it cannot validate grid state, cadence, or a production mapping. The table deliberately does **not** choose one.
 
 | Public artifact or candidate | What the public contract confirms | Why it is not verified evidence | Current disposition |
 | --- | --- | --- | --- |
@@ -119,18 +119,66 @@ There is no live evidence in this repository. The table deliberately does **not*
 
 Run this only with an authorized account and an explicitly chosen regional host. Keep credentials, raw tokens, serial numbers, station IDs, and unredacted responses outside the repository.
 
-1. **Record the test context.** Confirm the actual data center, application, account role (personal or business), target station, inverter serial/model, firmware, logger, and timezone. Use UTC-synchronized clocks. Do not infer any of these from the plan or a public example.
-2. **Exercise authentication safely.** Call the token endpoint with secrets supplied by a secret manager; record only sanitized HTTP/body status, `code`, `success`, token type, and expiry metadata. For a business account, call `/v1.0/account/info` and retain only a redacted role/company reference. Verify expiry and invalidation behavior without logging tokens.
+This is an operator validation gate, not a development prerequisite: offline implementation and tests do not require live Deye calls. Nothing here authorizes a live request, outage, credential change, or deployment. The public-contract inventory and current sample are provisional; there is no validated two-state grid mapping. Until the evidence below is supplied and reviewed, `unknown` / `unverified` remains the safe default. Never manufacture a grid transition from a fixture, replay, missing data, or power flow.
+
+1. **Record the test context.** Confirm the regional hostname, account role (personal or business), target model, firmware, logger model/type, and timezone. Record no account, application, company, station, device, or serial identifiers. Use UTC-synchronized clocks. Do not infer any of these from the plan or a public example.
+2. **Exercise authentication safely.** If authorized, call the token endpoint with secrets supplied by a secret manager; record only sanitized HTTP/body status, `code`, `success`, token type, and expiry metadata. For a business account, call `/v1.0/account/info` and record role only. Do not reset a password or change a role solely for this test; record a pre-existing/independently scheduled lifecycle event, or mark a simulation/not tested. Mark each expiry, invalidation, and rotation result as **observed**, **simulated**, **documentation-only**, or **not tested**; never log tokens or imply a simulation is live evidence.
 3. **Discover the topology.** Call `/v1.0/station/list` or `/v1.0/station/listWithDevice`, then `/v1.0/station/device`/`/v1.0/device/list` as permitted. Confirm which device is the exact target inverter and which logger/meter supplies the readings. Redact identifiers in any fixture.
-4. **Enumerate actual points.** Call `/v1.0/device/measurePoints` for the target device. Save a sanitized list of exact returned keys, units, product ID, and time zone. Do not substitute names from another model or from a public example.
-5. **Capture an online baseline.** At a known utility-grid-present time, call `/v1.0/station/latest` and `/v1.0/device/latest` at a conservative cadence. Record server receive time, HTTP status, body `code`/`success`, origin timestamp, exact key/unit/value triples, device state, and response age. Also record a normal zero-flow period if available; this is specifically a test that zero power is not treated as offline.
-6. **Test controlled outage and restoration.** With an authorized person following electrical-safety procedures and an independent ground-truth method, capture several samples before, during, and after a known utility interruption and restoration. Do not use Deye control endpoints to induce an outage. Repeat at least two outage/restoration cycles if safe, and record the first cloud observation separately from the estimated physical switching time.
+4. **Enumerate actual points.** Call `/v1.0/device/measurePoints` for the target device. Save a sanitized list of exact returned keys, units, and time zone; omit product IDs and all account/device identifiers. Do not substitute names from another model or from a public example.
+5. **Capture an online baseline.** At a known utility-grid-present time, call `/v1.0/station/latest` and `/v1.0/device/latest` at a conservative cadence. Record request-start and response-receive UTC times separately from each source timestamp, plus HTTP status, body `code`/`success`, exact key/unit/value triples, device state, and observed response age. Also record a normal zero-flow period if available; this is specifically a test that zero power is not treated as offline.
+6. **Observe outage and restoration only if they occur.** Do not induce, request, or extend an outage for validation, and do not use Deye control endpoints. If a utility interruption and restoration occur naturally, capture samples around them with an independent ground-truth method. Record each ground-truth observation time separately from request, receive, and source times; distinguish estimated physical switching time from the first cloud observation. Seek additional independent cycles only when naturally available; otherwise leave this evidence incomplete.
 7. **Cross-check candidates.** Compare exact device points, station summary fields, device/station states, and alerts for every cycle. A field qualifies only if its semantics and unit are confirmed, it is present on this device/firmware, its timestamp is fresh, and it changes consistently with both outage and restoration. Keep `unknown` for missing, stale, contradictory, or communication-only evidence.
 8. **Check history and delay.** Use `/v1.0/device/historyRaw` for a narrow window (within the five-day public limit) and the relevant exact point names. Compare history to latest responses and measure cloud reporting delay; do not treat a fetched response as a new physical observation.
 9. **Exercise replay/clock handling.** Re-read an unchanged upstream sample, capture out-of-order/old samples if they occur, validate seconds versus milliseconds and date-time forms, and ensure a replay cannot create a second transition. Record clock skew and define the accepted range before production mapping.
 10. **Respect service limits.** The public Best Practices page gives preliminary guidance of 100,000 calls/month, 60 QPM, and a 1–2 minute interval; it says current limits can be exposed in response headers and excess can return HTTP 429. Start below those figures, stagger calls, cache discovery, and treat the values as provisional until the application/account limits are confirmed.
-11. **Write the evidence table.** For each accepted field, record exact upstream key, unit, source device, origin timestamp, server `fetchedAt`, known grid state, observed value/range, delay, failure behavior, and confidence. Store only sanitized fixtures. If no direct signal passes, document the failed candidates and leave the public API status `unknown`.
+11. **Write the evidence record below.** For each candidate, record exact upstream key, unit, source timestamp, request/receive times, independently known grid state, observed value/range, delay, power direction if independently established, failure behavior, and confidence. Store only sanitized fixtures. If no direct signal passes, document the failed candidates and leave the public API status `unknown`.
+
+### Sanitized operator evidence record — copy and complete only with authorized evidence
+
+Use UTC ISO-8601 timestamps with `Z`. Write `unknown`, `not observed`, or `not tested` rather than guessing. Do not paste raw payloads or include secrets, tokens, account/application/company/station/device IDs, request IDs, serial numbers, or other operator identifiers. Keep any identifier-to-placeholder key outside this repository.
+
+**Context (no identifiers):**
+
+| Item | Sanitized value |
+| --- | --- |
+| Regional API hostname | `[e.g. public regional hostname; no IDs]` |
+| Account role | `[personal / business / unknown]` |
+| Inverter model / firmware | `[value / unknown]` |
+| Logger model/type | `[value / unknown]` |
+| Account/device timezone | `[IANA timezone / unknown]` |
+| Validation date and clock synchronization | `[UTC date; method/status]` |
+
+**Authentication lifecycle (do not record credentials or token values):**
+
+| Check | Evidence mode (`observed` / `simulated` / `documentation-only` / `not tested`) | Sanitized outcome and UTC time | Expiry/invalidation/rotation behavior confirmed? |
+| --- | --- | --- | --- |
+| Token issuance / expiry metadata | `[ ]` | `[HTTP/body status, token type, expiresIn; issued at UTC]` | `[yes/no/unknown]` |
+| Expiry or invalid-token response | `[ ]` | `[sanitized status/code and UTC time, or not tested]` | `[yes/no/unknown]` |
+| Role/password invalidation | `[ ]` | `[sanitized outcome and UTC time, or not tested]` | `[yes/no/unknown]` |
+| Credential rotation / replacement | `[ ]` | `[sanitized outcome and UTC time, or not tested]` | `[yes/no/unknown]` |
+
+**Request/sample record (one row per response):**
+
+| Request start UTC | Response received UTC (`fetchedAt`) | Source timestamp as returned / normalized UTC (`measuredAt`) | Endpoint category | HTTP + sanitized `code`/`success` | Exact point key / unit / value | Known grid state and independent source | Source age / request cadence / receive lag |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `[ ]` | `[ ]` | `[ ]` | `[station latest / device latest / history / other]` | `[ ]` | `[ ]` | `[present / outage / restored / unknown; source]` | `[ ]` |
+
+State the observed logger upload/source-sample cadence and API polling cadence separately. Calculate receive lag only where both source and receive times are available; note missing, repeated, out-of-order, or stale timestamps rather than treating fetch time as measurement time.
+
+**Power semantics (candidate by exact field, no inference from names):**
+
+| Exact key | Unit | Observed signed values | Independently established direction (`import` / `export` / other) and method | Sign convention (`confirmed` / `unresolved`) | Evidence mode and notes |
+| --- | --- | --- | --- | --- | --- |
+| `[ ]` | `[ ]` | `[ ]` | `[ ]` | `[ ]` | `[ ]` |
+
+**Independent grid ground truth (one row per observation; do not manufacture events):**
+
+| Ground-truth state (`present` / `outage` / `restored`) | Independent observation UTC | Method/source (not Deye telemetry) | First corresponding cloud source UTC | Request start UTC | Response receive UTC | Candidate field/value and interpretation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `[ ]` | `[ ]` | `[ ]` | `[ ]` | `[ ]` | `[ ]` | `[ ]` |
+
+**Disposition:** `[candidate mapping and limits, or no validated mapping]`; `[unknown/unverified default retained? yes/no]`; `[reviewer/date]`. A two-state mapping is not validated by a single sample, public example, simulated transition, zero/non-zero power, communication state, or alert example. Preserve `unknown` for absent, stale, contradictory, or communication-only evidence. Do not create transition records to fill gaps.
 
 ## Phase 1 gate
 
-This research is complete only as a public-contract prerequisite. The plan's Phase 1 acceptance gate remains blocked by the absence of authorized live verification, exact target-device measurement points, outage/restoration observations, quota confirmation, and auth-expiry observations. No implementation should freeze a production grid mapping based on this document.
+This research is complete only as a public-contract prerequisite. The repository has an operator-supplied sanitized actual sample and exact advertised point inventory, but their receive-time/ground-truth alignment is absent and the agent made no live calls. The Phase 1 gate remains blocked on independent review of target point semantics and live lifecycle, cadence/lag, quota, power-sign, and grid validation, including independently timestamped naturally occurring grid-present/outage/restored observations. No implementation should freeze a production grid mapping based on this document. Live calls are not required for development; without sufficient reviewed evidence, the mapping stays unvalidated and the safe result remains `unknown` / `unverified`.

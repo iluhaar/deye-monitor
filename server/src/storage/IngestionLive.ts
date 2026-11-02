@@ -39,6 +39,22 @@ function canonical(value: string): boolean {
 export function makeIngestionStorage(db: D1Database, policy: RefreshGuardPolicy): IngestionStore {
   const guard = makeRefreshGuard(db, policy)
 
+  // History expires by database UTC, never by an upstream or isolate timestamp.
+  // Keep the current epoch's poll as operational state, even under clock skew.
+  function retention(lease: RefreshLease) {
+    return [
+      db.prepare(`DELETE FROM poll_runs WHERE station_id = ?
+        AND started_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-12 hours')
+        AND window_key <> ?`).bind(lease.stationId, String(lease.epoch)),
+      db.prepare(`DELETE FROM grid_events WHERE station_id = ?
+        AND observed_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-12 hours')`).bind(lease.stationId),
+    ]
+  }
+
+  function recordPoll(lease: RefreshLease, poll: RefreshPollRecord) {
+    return guard.recordPoll(lease, poll, retention(lease))
+  }
+
   const read = <A>(operation: () => Promise<A>) => Effect.tryPromise({
     try: operation, catch: () => new IngestionStorageError(),
   })
@@ -68,7 +84,7 @@ export function makeIngestionStorage(db: D1Database, policy: RefreshGuardPolicy)
         const outcome: IngestionOutcome = freshness.status === "unavailable"
           ? freshness.reason : "invalid_timestamp"
 
-        yield* guard.recordPoll(lease, { ...poll, result: "unavailable", outcome,
+        yield* recordPoll(lease, { ...poll, result: "unavailable", outcome,
           measuredAt: null, errorCategory: outcome })
 
         return outcome
@@ -84,7 +100,7 @@ export function makeIngestionStorage(db: D1Database, policy: RefreshGuardPolicy)
 
       if (watermark?.value !== null && watermark?.value !== undefined && measuredAt <= watermark.value) {
         const outcome = measuredAt === watermark.value ? "replay" : "backward"
-        yield* guard.recordPoll(lease, { ...poll, result: "stale", outcome,
+        yield* recordPoll(lease, { ...poll, result: "stale", outcome,
           measuredAt, errorCategory: outcome })
 
         return outcome
@@ -155,13 +171,13 @@ export function makeIngestionStorage(db: D1Database, policy: RefreshGuardPolicy)
           WHERE station_id=?`).bind(poll.completedAt, lease.stationId))
       }
 
-      yield* guard.commit(lease, writes, measuredAt)
+      yield* guard.commit(lease, [...writes, ...retention(lease)], measuredAt)
 
       return outcome
     })
   }
 
-  return { acquire: guard.acquire, release: guard.release, persist, recordFailure: guard.recordPoll }
+  return { acquire: guard.acquire, release: guard.release, persist, recordFailure: recordPoll }
 }
 
 export function ingestionStorageLayer(db: D1Database, policy: RefreshGuardPolicy) {

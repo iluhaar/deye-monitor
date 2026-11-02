@@ -1,7 +1,10 @@
 # Deye normalization limits
 
 The current device/latest mapping is `deye-device-latest-unverified-v1`. It is
-deliberately a retention mapping, not an outage detector.
+deliberately a retention mapping, not an outage detector. Its sample fixture is
+an operator-supplied actual upstream response, used for offline normalization
+only. Its receive time and independent ground-truth alignment are absent, so it
+does not validate grid classification or a two-state mapping.
 
 ## Retained fields
 
