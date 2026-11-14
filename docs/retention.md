@@ -48,15 +48,10 @@ or added to support cleanup.
 
 ```sh
 cd server
-npm test -- test/ingestion.test.ts test/refresh-guard.test.ts
 npm run verify
 ```
 
-Real migrated-D1 tests seed 13-hour-old and 11-hour-old history, then check
-pruning during success, failure, replay and unavailable source time. They also
-check station isolation, retained latest snapshot/confirmed context/watermark,
-and inability of an expired ingestion worker to prune. Existing fencing and
-transaction rollback tests remain in the gate.
+The gate runs lint, typecheck, and the Wrangler dry-run build.
 
 This implements the retention part of ILL-84. The operator deferred the separate
 health enhancements, structured logging and aggregate metrics to Phase 2 / backlog;

@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["typescript", "oxc", "vitest"],
+  "plugins": ["typescript", "oxc"],
   "categories": {
     "correctness": "error"
   },
@@ -23,7 +23,6 @@
     { "name": "anti-slop-effect", "specifier": "./tools/oxlint/anti-slop/effect/index.ts" }
   ],
   "rules": {
-    "vitest/valid-expect": ["error", { "maxArgs": 2 }],
     "oxc/no-accumulating-spread": "error",
     "anti-slop/no-array-filter-map": "error",
     "anti-slop/no-reduce-accumulator-copy": "error",

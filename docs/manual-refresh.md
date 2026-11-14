@@ -159,12 +159,8 @@ rotation, cutover and recovery guidance, and deployment prerequisites for
 Cloudflare Access and edge rate limits, see the [security runbook](./security.md).
 Those edge controls are not configured or verified by this source tree.
 
-## Verification boundary
+## Runtime boundary
 
-`server/test/refresh-api.test.ts` tests authorization, invalid inputs, activation,
-configuration bounds, sanitized envelopes, persisted throttling and overlapping
-HTTP requests across instances. Full HTTP → adapter → normalizer → D1 tests use
-fake upstream responses, not credentials or a live account. Synthetic confirmed
-transitions test event idempotency only. The real normalizer remains
-`unknown`/unverified with null directional power until its separate validation
-gates pass. No Cron or production deployment is enabled by this change.
+The normalizer reports `unknown`/unverified grid status with null directional
+power until its separate validation gates pass. Manual refresh does not enable
+Cron or deploy the Worker.

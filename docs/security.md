@@ -185,8 +185,8 @@ are instructions only; no live commands or deployment checks are performed by
 this runbook.
 
 For deterministic local checks, run the repository's local verification gate
-from `server/`. It exercises the test suite, Wrangler dry-run build, and isolated
-local migration check; it does not deploy or access remote D1:
+from `server/`. It runs lint, typecheck, and the Wrangler dry-run build without
+deploying or accessing remote D1:
 
 ```sh
 cd server

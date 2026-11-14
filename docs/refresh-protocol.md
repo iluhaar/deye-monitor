@@ -58,11 +58,3 @@ Guard errors contain only an operation tag; SQL/driver errors are not exposed.
 A rejected/failed commit must not be treated as outage evidence. Guard rows must
 not be deleted during normal retention: deleting them would reset epoch and
 replay/throttle history.
-
-## Verification
-
-`server/test/refresh-guard.test.ts` applies all three migrations to Workers-runtime D1
-and exercises contention across instances, throttling/release, expired takeover,
-owner/epoch fencing, atomic snapshot/event/poll writes, rollback/retry, persisted
-watermarks, equal/backward/future observations and concurrent replay. It makes no
-live upstream requests and does not require credentials.

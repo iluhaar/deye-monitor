@@ -42,18 +42,11 @@ npm ci
 npm run verify
 ```
 
-`npm run verify` is the local verification gate. It runs lint, typecheck, the
-test suite, the Wrangler dry-run build, and an isolated D1 migration check in
-sequence. Linting uses Oxlint with correctness rules and TypeScript/Vitest
-plugins; warnings fail the lint check. `npm test` applies the configured D1
-migrations in the Workers-runtime test database. The migration check separately
-creates fresh temporary persistence under `/tmp/opencode`, applies the
-configured migrations with Wrangler in local mode, checks the applied migration
-set and expected schema, then reapplies to check idempotence. Its temporary
-database is removed afterward; every D1 command uses an explicit
-`--persist-to`, so this gate does not use or alter the operator's `.wrangler`
-database or any remote D1 database. The individual lint, typecheck, test, and
-build scripts remain available for focused runs.
+`npm run verify` is the local verification gate. It runs lint, typecheck, and
+the Wrangler dry-run build in sequence. Linting uses Oxlint with correctness
+rules and the TypeScript plugin; warnings fail the lint check. The individual
+lint, typecheck, and build scripts remain available for focused runs.
+The gate does not deploy the Worker or access remote D1.
 
 ## Local signoff
 

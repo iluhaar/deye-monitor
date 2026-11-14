@@ -78,15 +78,10 @@ Retention must preserve each station's latest poll (or an equivalent durable
 collection outcome), guard watermark/epoch and confirmed context. Deleting these
 indiscriminately can reset failure, replay or transition history semantics.
 
-## Verification and boundary
+## Runtime boundary
 
-`server/test/ingestion.test.ts` runs against Workers-runtime D1 with real
-migrations. It covers synthetic online/offline changes, gaps, replay, missing and
-future time, stale readings, auth/unavailability, cancellation, contention,
-lease loss, SQL rollback, replacement Effect Layers, authenticated stored-data
-reads, and full adapter → normalizer → ingestion → D1 composition using fake
-HTTP. The live Deye normalizer remains unknown/unverified with null directional
-power; synthetic confirmed tests do not validate a production mapping.
+The Deye normalizer reports unknown/unverified grid status with null directional
+power until its separate validation gates pass.
 
 Deployment, live upstream verification and release scenarios remain separate
 work. Stronger manual-refresh authorization and HTTP throttle responses are
