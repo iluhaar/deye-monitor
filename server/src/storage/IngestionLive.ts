@@ -4,6 +4,7 @@ import { evaluateFreshness, evaluateSnapshot } from "../domain/grid-status"
 import type { TelemetrySnapshot } from "../domain/telemetry"
 import { IngestionStorage, IngestionStorageError } from "../services/IngestionStorage"
 import type { IngestionOutcome, IngestionStore } from "../services/IngestionStorage"
+import type { GridEventDelivery } from "../services/GridEventDelivery"
 // RefreshGuard is a private D1 helper constructed by its owning ingestion layer.
 // oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports
 import { makeRefreshGuard, observationKey } from "./RefreshGuard"
@@ -36,7 +37,9 @@ function canonical(value: string): boolean {
   return Number.isFinite(ms) && new Date(ms).toISOString() === value && value.length === 24
 }
 
-export function makeIngestionStorage(db: D1Database, policy: RefreshGuardPolicy): IngestionStore {
+export function makeIngestionStorage(
+  db: D1Database, policy: RefreshGuardPolicy, delivery?: GridEventDelivery,
+): IngestionStore {
   const guard = makeRefreshGuard(db, policy)
 
   // History expires by database UTC, never by an upstream or isolate timestamp.
@@ -151,13 +154,16 @@ export function makeIngestionStorage(db: D1Database, policy: RefreshGuardPolicy)
           poll.completedAt, freshness.status === "stale" ? "stale" : "success",
           poll.latencyMs, measuredAt, observationKey(lease.stationId, measuredAt), outcome, lease.epoch)]
 
+      let eventId: string | null = null
+
       if (confirmed) {
         if (context !== null && context.status !== evaluated.grid.status) {
+          eventId = crypto.randomUUID()
           writes.push(db.prepare(`INSERT INTO grid_events (
             id, station_id, status, observed_at, previous_status, previous_observed_at,
             evidence_json, source, idempotency_key, created_at, gap_since
           ) VALUES (?, ?, ?, ?, ?, ?, ?, 'deye-cloud', ?, ?, ?)`)
-            .bind(crypto.randomUUID(), lease.stationId, evaluated.grid.status, measuredAt,
+            .bind(eventId, lease.stationId, evaluated.grid.status, measuredAt,
               context.status, context.observed_at, JSON.stringify(snapshot.grid.evidence),
               observationKey(lease.stationId, measuredAt), poll.completedAt, context.gap_since))
         }
@@ -171,7 +177,18 @@ export function makeIngestionStorage(db: D1Database, policy: RefreshGuardPolicy)
           WHERE station_id=?`).bind(poll.completedAt, lease.stationId))
       }
 
+      if (eventId !== null && delivery !== undefined) {
+        const id = eventId
+        yield* read(() => delivery.arm(lease.stationId, id, lease.leaseUntil))
+      }
+
       yield* guard.commit(lease, [...writes, ...retention(lease)], measuredAt)
+
+      if (eventId !== null && delivery !== undefined) {
+        // A failed fast path must not turn a committed observation into a failed refresh.
+        // The pre-armed durable alarm remains responsible for delivery.
+        yield* Effect.promise(() => delivery.publish(lease.stationId).catch(() => undefined))
+      }
 
       return outcome
     })
@@ -180,6 +197,6 @@ export function makeIngestionStorage(db: D1Database, policy: RefreshGuardPolicy)
   return { acquire: guard.acquire, release: guard.release, persist, recordFailure: recordPoll }
 }
 
-export function ingestionStorageLayer(db: D1Database, policy: RefreshGuardPolicy) {
-  return Layer.succeed(IngestionStorage, makeIngestionStorage(db, policy))
+export function ingestionStorageLayer(db: D1Database, policy: RefreshGuardPolicy, delivery?: GridEventDelivery) {
+  return Layer.succeed(IngestionStorage, makeIngestionStorage(db, policy, delivery))
 }

@@ -4,6 +4,10 @@
   "main": "src/index.ts",
   "compatibility_date": "2025-01-01",
   "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [{ "name": "GRID_EVENT_STREAMS", "class_name": "GridEventStream" }]
+  },
+  "migrations": [{ "tag": "grid-event-stream-v1", "new_sqlite_classes": ["GridEventStream"] }],
   "d1_databases": [
     {
       "binding": "DB",
@@ -28,6 +32,9 @@
   },
   "env": {
     "production": {
+      "durable_objects": {
+        "bindings": [{ "name": "GRID_EVENT_STREAMS", "class_name": "GridEventStream" }]
+      },
       "d1_databases": [
         {
           "binding": "DB",

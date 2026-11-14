@@ -30,6 +30,7 @@ import {
   MAX_EVENT_CURSOR_ID_LENGTH,
   MAX_EVENT_DATE_LENGTH,
   encodeEventCursor,
+  decodeEventCursor,
   InvalidEventsQuery,
   parseEventsQuery,
   validateEventsQueryBounds,
@@ -50,6 +51,7 @@ export interface AppOptions {
 
 const unavailableStatus = unavailableSnapshot()
 const eventsPath = "/api/v1/events"
+const streamPath = "/api/v1/events/subscribe"
 const refreshPath = "/api/v1/refresh"
 
 const readPaths = new Set([
@@ -57,6 +59,7 @@ const readPaths = new Set([
   "/api/v1/telemetry",
   "/api/v1/battery",
   eventsPath,
+  streamPath,
   "/api/v1/health",
 ])
 
@@ -579,6 +582,42 @@ export function createApp(options: AppOptions = {}) {
       return context.json(success(publicEvents(page)))
     } catch (error) {
       return storageFailureResponse(context, error)
+    }
+  })
+
+  app.get(streamPath, async (context) => {
+    // HEAD must never create a subscription.
+    if (context.req.method !== "GET") {
+      return context.json(failure("METHOD_NOT_ALLOWED", "Use GET to subscribe"), 405)
+    }
+
+    const id = stationId(context.env)
+    const streams = context.env.GRID_EVENT_STREAMS
+
+    if (id === null || streams === undefined) {
+      return context.json(failure("SERVICE_NOT_CONFIGURED", "Subscriptions are not configured"), 503)
+    }
+
+    const cursor = context.req.header("Last-Event-ID")
+
+    try {
+      decodeEventCursor(cursor)
+    } catch {
+      return context.json(failure("INVALID_CURSOR", "Invalid event cursor"), 400)
+    }
+
+    try {
+      if (context.req.header("Upgrade")?.toLowerCase() !== "websocket") {
+        return context.json(failure("UPGRADE_REQUIRED", "Use a WebSocket connection"), 426)
+      }
+
+      const headers = new Headers({ Upgrade: "websocket", "X-Station-ID": id })
+
+      if (cursor !== undefined) headers.set("Last-Event-ID", cursor)
+
+      return await streams.getByName(id).fetch(new Request("https://subscriptions.internal/subscribe", { headers }))
+    } catch {
+      return context.json(failure("STREAM_UNAVAILABLE", "Subscriptions are unavailable"), 503)
     }
   })
 

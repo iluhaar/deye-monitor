@@ -1,7 +1,9 @@
 import type { D1Database, RateLimit } from "@cloudflare/workers-types"
+import type { GridEventStream } from "./subscriptions/GridEventStream"
 
 export interface Env {
   readonly DB?: D1Database
+  readonly GRID_EVENT_STREAMS?: DurableObjectNamespace<GridEventStream>
   readonly API_READ_RATE_LIMITER?: RateLimit
   readonly API_AUTH_RATE_LIMITER?: RateLimit
   readonly API_BEARER_TOKEN?: string

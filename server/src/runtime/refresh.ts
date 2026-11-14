@@ -6,6 +6,7 @@ import type { Env } from "../env"
 import { PollingError, PollingService } from "../services/PollingService"
 import type { RefreshGuardPolicy } from "../storage/RefreshGuard"
 import { ingestionLayer } from "./ingestion"
+import { gridEventDelivery } from "./delivery"
 
 export class RefreshConfigurationError extends Data.TaggedError("RefreshConfigurationError")<{}> {}
 
@@ -52,7 +53,8 @@ export function refreshConfiguration(env: Env) {
 export function refreshLayer(env: Env, freshnessThresholdSeconds: number, runtime: DeyeRuntime = {}) {
   const { config, policy } = refreshConfiguration(env)
   const db = env.DB!
-  const live = ingestionLayer(db, config, policy, FINALIZATION_BUDGET_MS, freshnessThresholdSeconds, runtime)
+  const delivery = env.GRID_EVENT_STREAMS === undefined ? undefined : gridEventDelivery(env.GRID_EVENT_STREAMS)
+  const live = ingestionLayer(db, config, policy, FINALIZATION_BUDGET_MS, freshnessThresholdSeconds, runtime, delivery)
 
   return Layer.effect(PollingService, Effect.gen(function* () {
     const polling = yield* PollingService

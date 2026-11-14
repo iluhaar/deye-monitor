@@ -85,7 +85,7 @@ function decodeBase64Url(value: string): string {
   }
 }
 
-function decodeCursor(value: string | undefined): EventCursor | null {
+export function decodeEventCursor(value: string | undefined): EventCursor | null {
   if (value === undefined) return null
 
   if (value.length > MAX_EVENT_CURSOR_LENGTH) throw new InvalidEventsQuery()
@@ -164,7 +164,7 @@ export function parseEventsQuery(
   return {
     stationId,
     limit: decoded.limit ?? 25,
-    cursor: decodeCursor(decoded.cursor),
+    cursor: decodeEventCursor(decoded.cursor),
     from,
     to,
   }

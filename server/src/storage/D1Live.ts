@@ -37,7 +37,7 @@ const SnapshotRowSchema = Schema.Struct({
   collection_available: Schema.optionalKey(Schema.Literals([0, 1])),
 })
 
-const EventRowSchema = Schema.Struct({
+export const EventRowSchema = Schema.Struct({
   id: Schema.String,
   station_id: Schema.String,
   status: Schema.Literals(["online", "offline"]),
@@ -99,7 +99,7 @@ function canonicalUtcTimestamp(value: string) {
   return { value: canonical, millis }
 }
 
-function decodeEventRow(row: Schema.Schema.Type<typeof EventRowSchema>): GridEvent {
+export function decodeEventRow(row: Schema.Schema.Type<typeof EventRowSchema>): GridEvent {
   if (row.id.trim() === "" || row.station_id.trim() === "") {
     throw new Error("invalid persisted event identity")
   }
