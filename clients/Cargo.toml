@@ -1,0 +1,14 @@
+[workspace]
+resolver = "3"
+members = ["shared", "web", "desktop"]
+default-members = ["shared", "web", "desktop"]
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+version = "0.1.0"
+
+[workspace.dependencies]
+rune = { git = "https://github.com/anomalyco/rune.git", rev = "6345dbaa673ad52e719100d50f5b57f91cb83290", default-features = false, features = ["embedded-fonts", "webgl"] }
+rune-kit = { git = "https://github.com/anomalyco/rune.git", rev = "6345dbaa673ad52e719100d50f5b57f91cb83290", default-features = false }
+serde = { version = "1", features = ["derive"] }

@@ -2,6 +2,7 @@
 server/node_modules/
 server/.wrangler/
 server/dist/
+clients/target/
 
 # Local-only Wrangler secrets and environment files
 .dev.vars

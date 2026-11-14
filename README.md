@@ -48,6 +48,11 @@ rules and the TypeScript plugin; warnings fail the lint check. The individual
 lint, typecheck, and build scripts remain available for focused runs.
 The gate does not deploy the Worker or access remote D1.
 
+## Read-only monitor clients
+
+The initial Rune web and native client scaffold, including WASM build and local
+preview instructions, is documented in [`clients/README.md`](clients/README.md).
+
 ## Local signoff
 
 After the checks pass and the tested commit has been pushed, install the

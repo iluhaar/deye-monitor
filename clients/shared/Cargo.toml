@@ -1,0 +1,19 @@
+[package]
+name = "deye-monitor-shared"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rune.workspace = true
+rune-kit.workspace = true
+serde.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = "0.3"
+serde-wasm-bindgen = "0.6"
+wasm-bindgen = "=0.2.129"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["Headers", "Request", "RequestCredentials", "RequestInit", "Response", "Url", "Window"] }
+# Rune keeps a static wgpu instance cache; wasm is single-threaded without atomics.
+wgpu = { version = "30", default-features = false, features = ["fragile-send-sync-non-atomic-wasm"] }
