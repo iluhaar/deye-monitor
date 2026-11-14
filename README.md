@@ -50,8 +50,9 @@ The gate does not deploy the Worker or access remote D1.
 
 ## Read-only monitor clients
 
-The initial Rune web and native client scaffold, including WASM build and local
-preview instructions, is documented in [`clients/README.md`](clients/README.md).
+The Rune web dashboard and desktop subscriber, including WebSocket updates,
+OS notifications, and build instructions, are documented in
+[`clients/README.md`](clients/README.md).
 
 ## Local signoff
 

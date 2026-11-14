@@ -1,8 +1,8 @@
 # Rune monitor clients
 
-The web client is the first read-only dashboard; the native client is a demo
-scaffold that uses the same Rune views and data models. Both start with an
-explicitly labeled demo fixture. No secrets are embedded or persisted.
+The web and desktop clients share Rune views and data models. Both start with
+an explicitly labeled demo fixture. The desktop client subscribes to live grid
+changes and displays OS notifications. No secrets are embedded or persisted.
 
 ## Build and run the web client
 
@@ -46,7 +46,7 @@ origin, serve the client and API through the same origin or configure a trusted
 reverse proxy to allow the page origin, `GET`, and the `Authorization` header.
 This client does not change server auth or CORS policy.
 
-## Native demo scaffold
+## Desktop subscriptions
 
 On a supported Linux or Windows desktop, from this directory:
 
@@ -54,5 +54,37 @@ On a supported Linux or Windows desktop, from this directory:
 cargo run -p deye-monitor-desktop
 ```
 
-The native scaffold currently shows the demo fixture only. The web client is
-the only client with browser HTTP transport in this initial build.
+Enter the API origin and read bearer token, then select **Connect & subscribe**.
+Use HTTPS for a remote server; HTTP is supported for loopback development
+origins such as `http://localhost:8787`.
+
+The desktop client:
+
+- Reads telemetry, health, and recent events when connecting.
+- Opens an authenticated WebSocket to `/api/v1/events/subscribe`, with the
+  bearer token in the handshake header.
+- Updates recent events as grid changes arrive and refreshes the stored
+  dashboard after replay catches up. These reads are event-driven, not polling.
+- Saves each processed checkpoint before acknowledging it. Resume cursors and
+  the latest 256 processed event IDs are stored atomically in the OS application
+  data directory, under `subscriptions/<API-origin-hash>.json`.
+- Reconnects with the saved cursor after interruption, using backoff and jitter,
+  respecting server rate limits, and renewing authorization before expiry.
+- Automatically resynchronizes when the server's retained history no longer
+  contains its cursor.
+- Shows OS alerts for new transitions observed after connecting and no more than
+  two minutes old. Older replay updates the event list without producing alerts.
+
+The token stays in memory only and must be entered again after restarting.
+Authorization rejection stops reconnects until you reconnect with valid
+credentials. **Disconnect** cancels the subscription and pending reconnects.
+To reset resume state manually, remove the API origin's JSON cursor file while
+disconnected.
+
+Keep the app open or minimized to receive updates. Closing the app ends the
+subscription. OS alerts use the desktop's notification service and permissions;
+Do Not Disturb and OS settings control their presentation.
+
+The browser dashboard continues to use **Read latest**. Browser WebSockets
+cannot set custom `Authorization` headers, so its HTTP read flow remains
+separate from the desktop subscription.

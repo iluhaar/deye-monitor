@@ -2,7 +2,8 @@
 
 The server uses **hibernating WebSockets**, not SSE or continuous polling.
 Cloudflare holds desktop connections while the station's Durable Object sleeps.
-No desktop app, browser push provider, or OS notification code is included.
+The [desktop client](../clients/README.md#desktop-subscriptions) consumes this
+protocol and displays OS notifications.
 
 ## Connection
 
@@ -101,7 +102,7 @@ does not run heartbeat timers.
   `{"type":"stream.error","reason":"STORAGE_UNAVAILABLE"}` followed by close
   code 1011.
 - Sessions have a one-hour authorization lifetime. `ready.expiresAt` tells the
-  future client when to reconnect with valid credentials. Expiration is enforced
+  client when to reconnect with valid credentials. Expiration is enforced
   before further data delivery; activity after expiry produces
   `{"type":"reconnect","reason":"reauthenticate"}` and close code 4001.
   An idle connection is not woken solely to close it. Automatic ping replies do

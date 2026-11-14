@@ -1,6 +1,8 @@
 #[cfg(target_arch = "wasm32")]
 mod http;
 mod model;
+#[cfg(not(target_arch = "wasm32"))]
+mod native;
 mod view;
 
 pub use model::{
@@ -15,6 +17,6 @@ pub fn run_web() {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn run_demo() {
-    view::run_demo();
+pub fn run_desktop() {
+    view::run_desktop();
 }

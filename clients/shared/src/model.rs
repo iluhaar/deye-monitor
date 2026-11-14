@@ -1,6 +1,6 @@
 use serde::Deserialize;
 
-#[derive(Clone, Copy, Debug, Default, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum GridStatus {
     Online,
@@ -220,6 +220,17 @@ pub struct DashboardData {
 }
 
 impl DashboardData {
+    pub fn record_event(&mut self, event: GridEvent) {
+        if self.events.iter().any(|existing| existing.id == event.id) {
+            return;
+        }
+        self.events.push(event);
+        self.events.sort_by(|left, right| {
+            (&right.observed_at, &right.id).cmp(&(&left.observed_at, &left.id))
+        });
+        self.events.truncate(6);
+    }
+
     pub fn demo() -> Self {
         let telemetry = TelemetrySnapshot {
             battery: BatteryReading {

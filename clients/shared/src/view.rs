@@ -1,5 +1,4 @@
 use rune::tok::{self, type_};
-#[cfg(target_arch = "wasm32")]
 use rune::{App, AppHandle, TextEdit, Tx, text_input};
 use rune::{AppSpec, Cx, El, ScrollSpec, col, el, row, text};
 use rune_kit::{Badge, BadgeVariant, Divider, Kit};
@@ -11,19 +10,18 @@ const APP_TITLE: &str = "Deye Monitor";
 pub(crate) struct MonitorState {
     data: DashboardData,
     demo: bool,
-    #[cfg(target_arch = "wasm32")]
     busy: bool,
     notice: String,
-    #[cfg(target_arch = "wasm32")]
     api_base: TextEdit,
-    #[cfg(target_arch = "wasm32")]
     token: TextEdit,
-    #[cfg(target_arch = "wasm32")]
     handle: Option<AppHandle<MonitorState>>,
+    #[cfg(not(target_arch = "wasm32"))]
+    subscription: Option<crate::native::Subscription>,
+    #[cfg(not(target_arch = "wasm32"))]
+    generation: u64,
 }
 
 impl MonitorState {
-    #[cfg(target_arch = "wasm32")]
     fn new(handle: Option<AppHandle<Self>>) -> Self {
         let mut token = TextEdit::new("");
         token.set_secure(true);
@@ -35,28 +33,16 @@ impl MonitorState {
             api_base: TextEdit::new(""),
             token,
             handle,
-        }
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    fn new() -> Self {
-        Self {
-            data: DashboardData::demo(),
-            demo: true,
-            notice: "Native scaffold is demo-only; use the web client for API reads.".to_owned(),
+            #[cfg(not(target_arch = "wasm32"))]
+            subscription: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            generation: 0,
         }
     }
 }
 
 fn initial_state() -> MonitorState {
-    #[cfg(target_arch = "wasm32")]
-    {
-        MonitorState::new(None)
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        MonitorState::new()
-    }
+    MonitorState::new(None)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -74,13 +60,78 @@ pub(crate) fn run_web() {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn run_demo() {
-    rune::run(AppSpec::new(
+pub(crate) fn run_desktop() {
+    let app = App::new(AppSpec::new(
         APP_TITLE,
         (1180.0, 900.0),
         initial_state,
         view,
     ));
+    let handle = app.handle();
+    app.init(move || MonitorState::new(Some(handle))).run();
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn begin_read(state: &mut MonitorState, _: &mut Tx) {
+    let base = state.api_base.text.trim().to_owned();
+    let token = state.token.text.trim().to_owned();
+    if base.is_empty() || token.is_empty() {
+        state.notice = "Enter an API origin and read bearer token.".to_owned();
+        return;
+    }
+    let Some(handle) = state.handle.clone() else {
+        state.notice = "The desktop client is not ready yet.".to_owned();
+        return;
+    };
+    state.subscription.take();
+    state.generation += 1;
+    let generation = state.generation;
+    state.busy = true;
+    match crate::native::start(base, token, move |update| {
+        handle.update(move |state, _| {
+            if state.generation != generation {
+                return;
+            }
+            match update {
+                crate::native::Update::Snapshot(data) => {
+                    state.data = *data;
+                    state.demo = false;
+                    state.busy = false;
+                }
+                crate::native::Update::Event(event) => {
+                    state.data.record_event(event);
+                    state.demo = false;
+                }
+                crate::native::Update::Status(message) => {
+                    state.notice = message;
+                    state.busy = false;
+                }
+                crate::native::Update::Stopped(message) => {
+                    state.notice = message;
+                    state.busy = false;
+                    state.subscription.take();
+                }
+            }
+        });
+    }) {
+        Ok(subscription) => {
+            // Credentials stay in the worker/UI memory, never in cursor storage.
+            state.subscription = Some(subscription);
+            state.notice = "Connecting and subscribing to grid changes…".to_owned();
+        }
+        Err(error) => {
+            state.busy = false;
+            state.notice = error;
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn disconnect(state: &mut MonitorState, _: &mut Tx) {
+    state.subscription.take();
+    state.generation += 1;
+    state.busy = false;
+    state.notice = "Disconnected. Stored readings remain visible.".to_owned();
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -360,10 +411,7 @@ fn view(state: &MonitorState, cx: &mut Cx<MonitorState>) -> El {
         .child(health)
         .child(events);
 
-    #[cfg(target_arch = "wasm32")]
     let connection = connection_panel(state, &theme, &kit);
-    #[cfg(not(target_arch = "wasm32"))]
-    let connection = desktop_panel(state, &theme, &kit);
 
     let content = col()
         .key("dashboard-content")
@@ -490,7 +538,6 @@ fn snapshot_health_note(
     }
 }
 
-#[cfg(target_arch = "wasm32")]
 fn connection_panel(state: &MonitorState, theme: &rune::tok::Theme, kit: &Kit) -> El {
     let base_input = text_input(&state.api_base, type_::BODY)
         .key("api-base")
@@ -517,6 +564,18 @@ fn connection_panel(state: &MonitorState, theme: &rune::tok::Theme, kit: &Kit) -
         .border(1.0, theme.card_border)
         .secure()
         .on_edit(|state: &mut MonitorState| &mut state.token);
+    #[cfg(target_arch = "wasm32")]
+    let button_label = if state.busy {
+        "READING…"
+    } else {
+        "READ LATEST"
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    let button_label = if state.busy {
+        "CONNECTING…"
+    } else {
+        "CONNECT & SUBSCRIBE"
+    };
     let read_button = el()
         .key("read-api")
         .h(42.0)
@@ -525,15 +584,43 @@ fn connection_panel(state: &MonitorState, theme: &rune::tok::Theme, kit: &Kit) -
         .radius(10.0)
         .fill(tok::accent(0, true))
         .child(
-            text(if state.busy {
-                "READING…"
-            } else {
-                "READ LATEST"
-            })
-            .font(type_::LABEL)
-            .color(rune::Color::WHITE),
+            text(button_label)
+                .font(type_::LABEL)
+                .color(rune::Color::WHITE),
         )
         .on_press_tx(begin_read);
+
+    let controls = row()
+        .w_full()
+        .gap(10.0)
+        .flex_wrap()
+        .child(token_input)
+        .child(read_button);
+    #[cfg(not(target_arch = "wasm32"))]
+    let controls = if state.subscription.is_some() {
+        controls.child(
+            el().key("disconnect-api")
+                .h(42.0)
+                .px(16.0)
+                .center()
+                .radius(10.0)
+                .fill(theme.bg)
+                .border(1.0, theme.card_border)
+                .child(text("DISCONNECT").font(type_::LABEL).color(theme.text))
+                .on_press_tx(disconnect),
+        )
+    } else {
+        controls
+    };
+    #[cfg(target_arch = "wasm32")]
+    let connection_kind = "GET ONLY";
+    #[cfg(not(target_arch = "wasm32"))]
+    let connection_kind = "WEBSOCKET UPDATES";
+    #[cfg(target_arch = "wasm32")]
+    let connection_note =
+        "Token stays in memory only. Reads use stored data; refresh ingestion is not called.";
+    #[cfg(not(target_arch = "wasm32"))]
+    let connection_note = "Token stays in memory only. Grid changes arrive over WebSocket; recent live changes show OS alerts. Historical replay updates the event list.";
 
     panel(
         col()
@@ -545,41 +632,20 @@ fn connection_panel(state: &MonitorState, theme: &rune::tok::Theme, kit: &Kit) -
                     .justify_between()
                     .center_y()
                     .child(section_title("READ-ONLY API CONNECTION", theme))
-                    .child(Badge::new("GET ONLY").standard().build(kit)),
+                    .child(Badge::new(connection_kind).standard().build(kit)),
             )
             .child(label("API origin", theme.text_secondary))
             .child(base_input)
             .child(label("Read bearer token", theme.text_secondary))
+            .child(controls)
             .child(
-                row()
-                    .w_full()
-                    .gap(10.0)
-                    .flex_wrap()
-                    .child(token_input)
-                    .child(read_button),
-            )
-            .child(text("Token stays in memory only. Requests use the stored-data API; refresh ingestion is not called.").font(type_::LABEL).color(theme.text_secondary))
-            .child(text(state.notice.clone()).font(type_::LABEL).color(theme.text_secondary)),
-        theme,
-    )
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn desktop_panel(state: &MonitorState, theme: &rune::tok::Theme, kit: &Kit) -> El {
-    panel(
-        col()
-            .w_full()
-            .gap(8.0)
-            .child(
-                row()
-                    .justify_between()
-                    .center_y()
-                    .child(section_title("NATIVE PREVIEW", theme))
-                    .child(Badge::new("DEMO ONLY").standard().build(kit)),
+                text(connection_note)
+                    .font(type_::LABEL)
+                    .color(theme.text_secondary),
             )
             .child(
                 text(state.notice.clone())
-                    .font(type_::BODY)
+                    .font(type_::LABEL)
                     .color(theme.text_secondary),
             ),
         theme,
