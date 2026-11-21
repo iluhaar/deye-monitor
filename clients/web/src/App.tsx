@@ -43,6 +43,7 @@ function App() {
   const [telemetry, setTelemetry] = useState<Telemetry | null>(null);
   const [operation, setOperation] = useState<Operation>("loading");
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const busy = useRef(false);
 
   const loadInitial = useCallback(async () => {
@@ -74,6 +75,7 @@ function App() {
 
   const refresh = async () => {
     if (busy.current) return;
+    setNotice(null);
     const issue = configurationIssue(true);
     if (issue) {
       setError(issue);
@@ -87,7 +89,7 @@ function App() {
     try {
       const result = await refreshTelemetry();
       setTelemetry(result.telemetry);
-      setError(result.warning);
+      setNotice(result.warning);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Unable to refresh inverter data.");
     } finally {
@@ -119,6 +121,11 @@ function App() {
       {error && (
         <div className="message error" role="alert">
           {error}
+        </div>
+      )}
+      {!error && notice && (
+        <div className="message" role="status">
+          {notice}
         </div>
       )}
       {!error && refreshIssue && (
