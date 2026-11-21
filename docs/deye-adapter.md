@@ -97,10 +97,12 @@ bodies are canceled without waiting on upstream stream cleanup.
 
 - The current mapping retains measured voltage and frequency, nullable missing
   fields, and separate upstream source time (`collectionTime`/`measuredAt`)
-  from server fetch time (`fetchedAt`). Normalization now supports an off-only
-  grid rule (`0..10 V` and exactly `0 Hz`); see
-  [normalization limits](./deye-normalization.md). Other combinations and
-  battery mode remain `unknown`; power sign semantics are not approved.
+  from server fetch time (`fetchedAt`). Normalization supports offline
+  (`0..10 V` and exactly `0 Hz`) and online (`207..253 V` and `49..51 Hz`)
+  rules; see [normalization limits](./deye-normalization.md). Other combinations and
+  grid readings remain `unknown`. Battery mode uses the operator-approved
+  negative-charging / positive-discharging assumption; grid-power direction
+  remains unverified.
 - The adapter composes with finite ingestion and fenced D1 persistence through
   the opt-in [manual refresh endpoint](./manual-refresh.md). GET routes remain
   D1-only; Cron and live activation are not enabled by default.

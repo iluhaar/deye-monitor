@@ -11,15 +11,22 @@ import type {
 
 /**
  * The mapping is intentionally versioned separately from the upstream API
- * version. This revision adds an off-only rule based on the operator-confirmed
- * outage sample (5.1 V, 0 Hz). Online and directional-power mappings remain
- * unverified.
+ * version. Grid rules use operator-confirmed off (5.1 V, 0 Hz) and on
+ * (227.5 V, 50.01 Hz) samples. Battery power uses the operator-approved
+ * assumption: negative charges, positive discharges. Grid power stays unverified.
  */
 export const DEYE_DEVICE_LATEST_MAPPING_REVISION =
-  "deye-device-latest-offline-v2" as const
+  "deye-device-latest-battery-v4" as const
 
 // Provisional residual-voltage tolerance, not a general undervoltage threshold.
 const GRID_OFF_MAX_VOLTAGE_V = 10
+
+// Conservative presence window for this 230 V / 50 Hz installation.
+// Outside this window means unknown, not necessarily offline or unsafe.
+const GRID_ON_MIN_VOLTAGE_V = 207
+const GRID_ON_MAX_VOLTAGE_V = 253
+const GRID_ON_MIN_FREQUENCY_HZ = 49
+const GRID_ON_MAX_FREQUENCY_HZ = 51
 
 export const UNVERIFIED_POWER_SIGN_CONVENTION = "unverified" as const
 
@@ -444,6 +451,13 @@ export function normalizeDeyeDeviceLatest(
     (value) => value >= 0,
   )
 
+  const batteryPowerW = measurementValue(measurements, "BatteryPower", "W")
+
+  const batteryMode =
+    batteryPowerW === null ? "unknown"
+      : batteryPowerW < 0 ? "charging"
+        : batteryPowerW > 0 ? "discharging" : "idle"
+
   const evidence: string[] = []
 
   if (voltageV !== null) evidence.push("grid_voltage")
@@ -455,6 +469,14 @@ export function normalizeDeyeDeviceLatest(
     voltageV <= GRID_OFF_MAX_VOLTAGE_V &&
     frequencyHz === 0
 
+  const gridOnline =
+    voltageV !== null &&
+    voltageV >= GRID_ON_MIN_VOLTAGE_V &&
+    voltageV <= GRID_ON_MAX_VOLTAGE_V &&
+    frequencyHz !== null &&
+    frequencyHz >= GRID_ON_MIN_FREQUENCY_HZ &&
+    frequencyHz <= GRID_ON_MAX_FREQUENCY_HZ
+
   return {
     source: "deye-cloud",
     stationId: options.stationId,
@@ -462,10 +484,10 @@ export function normalizeDeyeDeviceLatest(
     powerSignConvention: UNVERIFIED_POWER_SIGN_CONVENTION,
     grid: {
       // Current-state freshness is enforced by evaluateSnapshot on ingestion
-      // and reads. Other measurement combinations do not establish grid-on.
-      status: gridOffline ? "offline" : "unknown",
+      // and reads. Ambiguous measurement combinations remain unknown.
+      status: gridOffline ? "offline" : gridOnline ? "online" : "unknown",
       evidence,
-      confidence: gridOffline ? "confirmed" : "unverified",
+      confidence: gridOffline || gridOnline ? "confirmed" : "unverified",
       voltageV,
       frequencyHz,
       // TotalGridPower and ExternalCTPowerL1L2 have different, unverified
@@ -474,10 +496,9 @@ export function normalizeDeyeDeviceLatest(
     },
     battery: {
       socPercent,
-      // BatteryPower is signed, but its charge/discharge direction is not
-      // established by the supplied evidence.
-      powerW: null,
-      mode: "unknown",
+      // Operator-approved sign assumption, independent of grid presence.
+      powerW: batteryPowerW,
+      mode: batteryMode,
     },
     home: { powerW: homePowerW },
     measuredAt,
