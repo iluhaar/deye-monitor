@@ -5,7 +5,7 @@ import worker from "./index.ts";
 
 test("Access gates assets and API; verified requests use the private proxy", async () => {
   const { privateKey, publicKey } = await generateKeyPair("RS256");
-  const jwk = { ...await exportJWK(publicKey), kid: "test-key", alg: "RS256" };
+  const jwk = { ...(await exportJWK(publicKey)), kid: "test-key", alg: "RS256" };
   const issuer = "https://test-team.cloudflareaccess.com";
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url) => {
@@ -19,17 +19,27 @@ test("Access gates assets and API; verified requests use the private proxy", asy
     ACCESS_AUD: "test-audience",
     API_BEARER_TOKEN: "server-read-secret",
     REFRESH_TOKEN: "server-refresh-secret",
-    ASSETS: { fetch: async () => { assets++; return new Response("private asset"); } },
-    API: { fetch: async (request) => {
-      forwarded.push(request);
-      return Response.json({ ok: true, data: null });
-    } },
+    ASSETS: {
+      fetch: async () => {
+        assets++;
+        return new Response("private asset");
+      },
+    },
+    API: {
+      fetch: async (request) => {
+        forwarded.push(request);
+        return Response.json({ ok: true, data: null });
+      },
+    },
   };
   async function token(options = {}) {
-    return new SignJWT({}).setProtectedHeader({ alg: "RS256", kid: "test-key" })
+    return new SignJWT({})
+      .setProtectedHeader({ alg: "RS256", kid: "test-key" })
       .setIssuer(options.issuer ?? issuer)
       .setAudience(options.audience ?? env.ACCESS_AUD)
-      .setSubject("user-id").setExpirationTime(options.exp ?? "5m").sign(privateKey);
+      .setSubject("user-id")
+      .setExpirationTime(options.exp ?? "5m")
+      .sign(privateKey);
   }
   async function call(path, jwt, init = {}, bindings = env) {
     const headers = new Headers(init.headers);
@@ -37,9 +47,13 @@ test("Access gates assets and API; verified requests use the private proxy", asy
       headers.set("Cf-Access-Jwt-Assertion", jwt);
     }
     headers.set("CF-Connecting-IP", "192.0.2.1");
-    return worker.fetch(new Request(`https://monitor.example.com${path}`, {
-      ...init, headers,
-    }), bindings);
+    return worker.fetch(
+      new Request(`https://monitor.example.com${path}`, {
+        ...init,
+        headers,
+      }),
+      bindings,
+    );
   }
   try {
     for (const path of ["/", "/assets/app.js", "/api/v1/telemetry"]) {
@@ -47,7 +61,9 @@ test("Access gates assets and API; verified requests use the private proxy", asy
       assert.equal((await call(path, "forged")).status, 403);
     }
     for (const options of [
-      { audience: "wrong" }, { issuer: "https://wrong.cloudflareaccess.com" }, { exp: 1 },
+      { audience: "wrong" },
+      { issuer: "https://wrong.cloudflareaccess.com" },
+      { exp: 1 },
     ]) {
       assert.equal((await call("/", await token(options))).status, 403);
     }
@@ -70,12 +86,24 @@ test("Access gates assets and API; verified requests use the private proxy", asy
     assert.equal((await call("/api/v1/events", jwt)).status, 404);
     assert.equal((await call("/api/v1/telemetry?x=1", jwt)).status, 400);
     assert.equal((await call("/api/v1/refresh", jwt, { method: "POST" })).status, 403);
-    assert.equal((await call("/api/v1/refresh", jwt, {
-      method: "POST", headers: { Origin: "https://evil.example" },
-    })).status, 403);
-    assert.equal((await call("/api/v1/refresh", jwt, {
-      method: "POST", headers: { Origin: "https://monitor.example.com" },
-    })).status, 200);
+    assert.equal(
+      (
+        await call("/api/v1/refresh", jwt, {
+          method: "POST",
+          headers: { Origin: "https://evil.example" },
+        })
+      ).status,
+      403,
+    );
+    assert.equal(
+      (
+        await call("/api/v1/refresh", jwt, {
+          method: "POST",
+          headers: { Origin: "https://monitor.example.com" },
+        })
+      ).status,
+      200,
+    );
     assert.equal(forwarded[1].headers.get("X-Refresh-Token"), "server-refresh-secret");
     assert.equal(forwarded[1].headers.get("Content-Length"), "0");
     const forwardedBeforeInvalidBodies = forwarded.length;
@@ -85,11 +113,16 @@ test("Access gates assets and API; verified requests use the private proxy", asy
       { headers: { "Transfer-Encoding": "chunked" }, body: "{}" },
       { headers: { "Transfer-Encoding": "chunked", "Content-Length": "0" }, body: "" },
     ]) {
-      assert.equal((await call("/api/v1/refresh", jwt, {
-        ...init,
-        method: "POST",
-        headers: { Origin: "https://monitor.example.com", ...init.headers },
-      })).status, 400);
+      assert.equal(
+        (
+          await call("/api/v1/refresh", jwt, {
+            ...init,
+            method: "POST",
+            headers: { Origin: "https://monitor.example.com", ...init.headers },
+          })
+        ).status,
+        400,
+      );
     }
     assert.equal(forwarded.length, forwardedBeforeInvalidBodies);
     // Reproduce Workerd's non-null stream on an empty browser POST.
@@ -108,12 +141,34 @@ test("Access gates assets and API; verified requests use the private proxy", asy
     assert.equal(forwarded.length, forwardedBeforeInvalidBodies + 1);
     assert.equal(forwarded.at(-1).body, null);
     assert.equal(forwarded.at(-1).headers.get("Content-Length"), "0");
-    assert.equal((await call("/api/v1/telemetry", jwt, {}, {
-      ...env, API_BEARER_TOKEN: "",
-    })).status, 503);
-    assert.equal((await call("/api/v1/telemetry", jwt, {}, {
-      ...env, API: { fetch: async () => Response.redirect("https://evil.example") },
-    })).status, 502);
+    assert.equal(
+      (
+        await call(
+          "/api/v1/telemetry",
+          jwt,
+          {},
+          {
+            ...env,
+            API_BEARER_TOKEN: "",
+          },
+        )
+      ).status,
+      503,
+    );
+    assert.equal(
+      (
+        await call(
+          "/api/v1/telemetry",
+          jwt,
+          {},
+          {
+            ...env,
+            API: { fetch: async () => Response.redirect("https://evil.example") },
+          },
+        )
+      ).status,
+      502,
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }

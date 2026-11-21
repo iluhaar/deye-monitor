@@ -6,24 +6,20 @@
   "compatibility_date": "2026-11-21",
   "workers_dev": false,
   "preview_urls": false,
-  "routes": [
-    { "pattern": "monitor.illiadot.dev", "custom_domain": true }
-  ],
+  "routes": [{ "pattern": "monitor.illiadot.dev", "custom_domain": true }],
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
     "run_worker_first": true,
-    "not_found_handling": "single-page-application"
+    "not_found_handling": "single-page-application",
   },
-  "services": [
-    { "binding": "API", "service": "deye-monitor-server-production" }
-  ],
+  "services": [{ "binding": "API", "service": "deye-monitor-server-production" }],
   "vars": {
     "ACCESS_TEAM_DOMAIN": "https://lingering-river-d2dd.cloudflareaccess.com",
-    "ACCESS_AUD": "0e13ce0f1d604e776c127ff503b7d2a462dbac3a8d4760b6bc7b5d66635727ce"
+    "ACCESS_AUD": "0e13ce0f1d604e776c127ff503b7d2a462dbac3a8d4760b6bc7b5d66635727ce",
   },
   "observability": {
     "enabled": true,
-    "traces": { "enabled": true }
-  }
+    "traces": { "enabled": true },
+  },
 }

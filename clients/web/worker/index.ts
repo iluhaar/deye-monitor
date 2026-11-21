@@ -24,8 +24,11 @@ function requestHasBody(request: Request): boolean {
 
 async function authorized(request: Request, env: Env): Promise<boolean> {
   const token = request.headers.get("Cf-Access-Jwt-Assertion");
-  if (!token || !env.ACCESS_AUD ||
-      !/^https:\/\/[a-z0-9-]+\.cloudflareaccess\.com$/.test(env.ACCESS_TEAM_DOMAIN)) {
+  if (
+    !token ||
+    !env.ACCESS_AUD ||
+    !/^https:\/\/[a-z0-9-]+\.cloudflareaccess\.com$/.test(env.ACCESS_TEAM_DOMAIN)
+  ) {
     return false;
   }
   try {
@@ -55,7 +58,11 @@ export async function handleAuthenticated(request: Request, env: Env): Promise<R
       return failure(404, "NOT_FOUND", "Not found");
     }
     if (url.search || (refresh && requestHasBody(request))) {
-      return failure(400, "INVALID_REQUEST", "Query parameters and request bodies are not supported");
+      return failure(
+        400,
+        "INVALID_REQUEST",
+        "Query parameters and request bodies are not supported",
+      );
     }
     // Cookie-authenticated writes must originate from this app, not another site.
     if (refresh && request.headers.get("Origin") !== url.origin) {
@@ -78,11 +85,13 @@ export async function handleAuthenticated(request: Request, env: Env): Promise<R
       headers.set("Content-Length", "0");
     }
     try {
-      const upstream = await env.API.fetch(new Request(`https://api.internal${url.pathname}`, {
-        method: request.method,
-        headers,
-        redirect: "manual",
-      }));
+      const upstream = await env.API.fetch(
+        new Request(`https://api.internal${url.pathname}`, {
+          method: request.method,
+          headers,
+          redirect: "manual",
+        }),
+      );
       if (upstream.status >= 300 && upstream.status < 400) {
         return failure(502, "UPSTREAM_ERROR", "Unexpected API redirect");
       }
@@ -109,7 +118,7 @@ export async function handleAuthenticated(request: Request, env: Env): Promise<R
 
 export default {
   async fetch(request, env): Promise<Response> {
-    if (!await authorized(request, env)) {
+    if (!(await authorized(request, env))) {
       return failure(403, "ACCESS_REQUIRED", "Cloudflare Access login required");
     }
     return handleAuthenticated(request, env);

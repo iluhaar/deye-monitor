@@ -1,9 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import {
-  configurationIssue,
-  readTelemetry,
-  refreshTelemetry,
-} from "./api";
+import { configurationIssue, readTelemetry, refreshTelemetry } from "./api";
 import type { Telemetry } from "./api";
 
 type Operation = "loading" | "refreshing" | null;
@@ -30,8 +26,9 @@ function formatAge(ageSeconds: number): string {
     { value: Math.floor((totalSeconds % 86_400) / 3600), label: "hour" },
     { value: Math.floor((totalSeconds % 3600) / 60), label: "minute" },
     { value: totalSeconds % 60, label: "second" },
-  ]
-    .flatMap(({ value, label }) => value > 0 ? [`${value} ${label}${value === 1 ? "" : "s"}`] : []);
+  ].flatMap(({ value, label }) =>
+    value > 0 ? [`${value} ${label}${value === 1 ? "" : "s"}`] : [],
+  );
 
   if (units.length === 0) {
     return "0 seconds";
@@ -48,7 +45,9 @@ function displayMode(mode: string): string {
 
 function App() {
   const [telemetry, setTelemetry] = useState<Telemetry | null>(null);
-  const [operation, setOperation] = useState<Operation>(() => configurationIssue() ? null : "loading");
+  const [operation, setOperation] = useState<Operation>(() =>
+    configurationIssue() ? null : "loading",
+  );
   const [error, setError] = useState<string | null>(() => configurationIssue());
   const [notice, setNotice] = useState<string | null>(null);
   const busy = useRef(false);
@@ -60,24 +59,26 @@ function App() {
     let active = true;
     busy.current = true;
 
-    void readTelemetry().then(
-      (reading) => {
+    void readTelemetry()
+      .then(
+        (reading) => {
+          if (active) {
+            setTelemetry(reading);
+            setError(null);
+          }
+        },
+        (error_: unknown) => {
+          if (active) {
+            setError(error_ instanceof Error ? error_.message : "Unable to read inverter data.");
+          }
+        },
+      )
+      .finally(() => {
         if (active) {
-          setTelemetry(reading);
-          setError(null);
+          setOperation(null);
+          busy.current = false;
         }
-      },
-      (error_: unknown) => {
-        if (active) {
-          setError(error_ instanceof Error ? error_.message : "Unable to read inverter data.");
-        }
-      },
-    ).finally(() => {
-      if (active) {
-        setOperation(null);
-        busy.current = false;
-      }
-    });
+      });
 
     return () => {
       active = false;
@@ -166,9 +167,7 @@ function App() {
               {displayMode(telemetry?.grid.status ?? "unknown")}
             </span>
           </div>
-          <p className="main-value">
-            {formatNumber(telemetry?.grid.powerW ?? null, "W")}
-          </p>
+          <p className="main-value">{formatNumber(telemetry?.grid.powerW ?? null, "W")}</p>
           <p className="caption">Grid power</p>
           <dl className="details">
             <div>
@@ -189,9 +188,7 @@ function App() {
               {displayMode(telemetry?.battery.mode ?? "unknown")}
             </span>
           </div>
-          <p className="main-value">
-            {formatNumber(telemetry?.battery.socPercent ?? null, "%")}
-          </p>
+          <p className="main-value">{formatNumber(telemetry?.battery.socPercent ?? null, "%")}</p>
           <p className="caption">State of charge</p>
           <dl className="details">
             <div>
@@ -200,7 +197,6 @@ function App() {
             </div>
           </dl>
         </article>
-
       </section>
 
       <footer className="timestamps">

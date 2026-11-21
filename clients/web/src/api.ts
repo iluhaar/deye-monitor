@@ -93,7 +93,9 @@ async function request<T>(
   if (!response.ok || payload.ok !== true) {
     const error = isRecord(payload.error) ? payload.error : {};
     throw new ApiError(
-      typeof error.message === "string" ? error.message : `The server returned an error (${response.status}).`,
+      typeof error.message === "string"
+        ? error.message
+        : `The server returned an error (${response.status}).`,
       typeof error.code === "string" ? error.code : undefined,
     );
   }
@@ -117,7 +119,8 @@ export async function refreshTelemetry(): Promise<{
   try {
     const result = await request("refresh", isRefreshResult, { method: "POST" }, true);
     if (result.refresh?.outcome === "skipped" && result.refresh.reason === "data_recent") {
-      warning = "The server fetched data recently, so refresh was skipped. Showing the latest stored readings.";
+      warning =
+        "The server fetched data recently, so refresh was skipped. Showing the latest stored readings.";
     }
   } catch (error) {
     if (
