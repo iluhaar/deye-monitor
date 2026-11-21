@@ -112,8 +112,10 @@ For local authenticated requests, put `API_BEARER_TOKEN` and the internal
   sanitized storage errors.
 - The current device/latest mapping retains measured voltage and frequency,
   nullable missing fields, and separate source and fetch times. Grid status
-  remains `unknown`/unverified and battery mode remains `unknown`; no approved
-  grid classifier is claimed. Zero power is not outage evidence.
+  is `offline` for validated `0..10 V` plus exactly `0 Hz`, based on the
+  operator-confirmed outage sample; other combinations remain `unknown`.
+  Freshness checks still apply. Battery mode remains `unknown`; zero power is
+  not outage evidence. See [`docs/deye-normalization.md`](docs/deye-normalization.md).
 - The read-only Deye adapter composes with normalization and finite ingestion
   through the configured manual refresh route. No production calls
   have been made, and credentials are not test fixtures. Regional host/config,

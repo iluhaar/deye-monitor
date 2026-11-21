@@ -11,11 +11,15 @@ import type {
 
 /**
  * The mapping is intentionally versioned separately from the upstream API
- * version.  This revision only describes fields that are safe to retain; it
- * does not approve a grid-state or directional-power mapping.
+ * version. This revision adds an off-only rule based on the operator-confirmed
+ * outage sample (5.1 V, 0 Hz). Online and directional-power mappings remain
+ * unverified.
  */
 export const DEYE_DEVICE_LATEST_MAPPING_REVISION =
-  "deye-device-latest-unverified-v1" as const
+  "deye-device-latest-offline-v2" as const
+
+// Provisional residual-voltage tolerance, not a general undervoltage threshold.
+const GRID_OFF_MAX_VOLTAGE_V = 10
 
 export const UNVERIFIED_POWER_SIGN_CONVENTION = "unverified" as const
 
@@ -446,16 +450,22 @@ export function normalizeDeyeDeviceLatest(
 
   if (frequencyHz !== null) evidence.push("grid_frequency")
 
+  const gridOffline =
+    voltageV !== null &&
+    voltageV <= GRID_OFF_MAX_VOLTAGE_V &&
+    frequencyHz === 0
+
   return {
     source: "deye-cloud",
     stationId: options.stationId,
     mappingRevision: options.mappingRevision ?? DEYE_DEVICE_LATEST_MAPPING_REVISION,
     powerSignConvention: UNVERIFIED_POWER_SIGN_CONVENTION,
     grid: {
-      // No field in this fixture has an approved utility-grid classification.
-      status: "unknown",
+      // Current-state freshness is enforced by evaluateSnapshot on ingestion
+      // and reads. Other measurement combinations do not establish grid-on.
+      status: gridOffline ? "offline" : "unknown",
       evidence,
-      confidence: "unverified",
+      confidence: gridOffline ? "confirmed" : "unverified",
       voltageV,
       frequencyHz,
       // TotalGridPower and ExternalCTPowerL1L2 have different, unverified

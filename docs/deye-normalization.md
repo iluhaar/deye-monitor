@@ -1,7 +1,8 @@
 # Deye normalization limits
 
-The current device/latest mapping is `deye-device-latest-unverified-v1`. It is
-deliberately a retention mapping, not an outage detector. Its sample fixture is
+The current device/latest mapping is `deye-device-latest-offline-v2`. It adds a
+provisional off-only rule using the operator-confirmed outage reading of
+5.1 V and 0 Hz on 2026-11-21. Its original sample fixture is
 an operator-supplied actual upstream response, used for offline normalization
 only. Its receive time and independent ground-truth alignment are absent, so it
 does not validate grid classification or a two-state mapping.
@@ -13,8 +14,8 @@ both numeric values and their units before retaining:
 
 | Deye key | Required unit | Internal field | Disposition |
 | --- | --- | --- | --- |
-| `GridVoltageL1L2` | `V` | `grid.voltageV` | Retained as an unverified candidate |
-| `GridFrequency` | `Hz` | `grid.frequencyHz` | Retained as an unverified candidate |
+| `GridVoltageL1L2` | `V` | `grid.voltageV` | Used by the off-only rule |
+| `GridFrequency` | `Hz` | `grid.frequencyHz` | Used by the off-only rule |
 | `SOC` | `%` | `battery.socPercent` | Retained when it is in `0..100` |
 | `TotalConsumptionPower` | `W` | `home.powerW` | Retained as a load magnitude only |
 
@@ -41,7 +42,12 @@ does not sample a clock or assume a reporting cadence. When a clock is supplied
 explicitly, the existing freshness evaluator classifies stale, future, and
 measured-after-fetch observations conservatively.
 
-Grid output is always `status: "unknown"` and `confidence: "unverified"` in
-this revision. A later separately approved mapping may add confirmed evidence;
-this normalizer must not manufacture confirmed online/offline transitions from
-the current fixture or from zero flow.
+Grid output is `status: "offline"` and `confidence: "confirmed"` only when
+both validated readings are present, voltage is in `0..10 V` inclusive, and
+frequency is exactly `0 Hz`. The 10 V limit is a provisional residual-voltage
+tolerance, not a general undervoltage threshold. All other combinations remain
+`unknown`/`unverified`; grid-on classification awaits a known-on sample.
+Read-time and ingestion evaluation still require fresh, available collection.
+Missing, malformed, wrong-unit, or contradictory readings cannot establish
+offline. Zero power alone is never outage evidence. Existing stored snapshots
+are not reclassified; a successful refresh is needed to apply this mapping.
