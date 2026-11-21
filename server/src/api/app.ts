@@ -68,6 +68,7 @@ const MAX_PUBLIC_EVIDENCE_COUNT = 16
 const MAX_PUBLIC_EVIDENCE_LENGTH = 64
 const MAX_EVENTS_RESPONSE_BYTES = 1_000_000
 const MAX_CLIENT_IP_LENGTH = 45
+const RECENT_REFRESH_CACHE_MS = 60_000
 
 const RATE_LIMITED_RESPONSE = {
   ok: false,
@@ -405,6 +406,26 @@ export function createApp(options: AppOptions = {}) {
 
     try {
       const layer = options.pollingLayer ?? refreshLayer(context.env, thresholdSeconds(context.env))
+      const storage = options.storageLayer ?? storageLayer(context.env)
+
+      const currentSnapshot = await runStorage(
+        StorageService.use((service) => service.getLatestSnapshot(id)),
+        storage,
+      )
+
+      const nowMs = now()
+      const fetchedAtMs = currentSnapshot === null ? Number.NaN : Date.parse(currentSnapshot.fetchedAt)
+      const cacheAgeMs = nowMs - fetchedAtMs
+
+      if (Number.isFinite(nowMs) && Number.isFinite(fetchedAtMs) &&
+        cacheAgeMs >= 0 && cacheAgeMs <= RECENT_REFRESH_CACHE_MS) {
+        const evaluated = evaluate(currentSnapshot, context.env, nowMs)
+
+        return context.json(success({
+          refresh: { outcome: "skipped", reason: "data_recent" },
+          telemetry: evaluated === null ? null : publicSnapshot(evaluated),
+        }))
+      }
 
       const result = await Effect.runPromise(PollingService.use((polling) => polling.refresh(id))
         .pipe(Effect.provide(layer)), { signal: context.req.raw.signal })
@@ -440,7 +461,7 @@ export function createApp(options: AppOptions = {}) {
       }
 
       const snapshot = await runStorage(StorageService.use((storage) => storage.getLatestSnapshot(id)),
-        options.storageLayer ?? storageLayer(context.env))
+        storage)
 
       const evaluated = evaluate(snapshot, context.env, now())
 

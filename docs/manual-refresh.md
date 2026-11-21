@@ -2,7 +2,9 @@
 
 `POST /api/v1/refresh` runs one finite, read-only Deye collection and persists it
 to D1. It does not control the inverter, schedule jobs, or make GET requests
-fetch upstream data. It is disabled unless explicitly configured and enabled.
+fetch upstream data. If the latest snapshot was fetched no more than 60 seconds
+ago, it returns that snapshot without contacting Deye. It is disabled unless
+explicitly configured and enabled.
 
 ## Authorization and request contract
 
@@ -87,6 +89,23 @@ needed without replacing existing station metadata. It never persists upstream
 credentials or the device serial. Bad authorization, disabled refresh, or invalid
 configuration cannot create a station or trigger upstream requests.
 
+## Recent-data cache
+
+After authorization, request validation, and refresh configuration checks, the
+handler reads the current snapshot before starting upstream polling. A parseable
+`fetchedAt` is a cache hit when its age is from 0 through 60,000 milliseconds,
+inclusive. Future or invalid timestamps and a missing snapshot are not cache hits;
+storage read failures return an error rather than skipping. A cache hit returns
+HTTP 200 with the current snapshot and does not acquire the refresh lease or call
+Deye. Actual polls continue to use the durable lease and configured minimum
+interval.
+
+The cache age uses `fetchedAt` (when the server received the upstream response),
+not `measuredAt` (when Deye says the readings were collected). Consequently, a
+recently fetched snapshot can still be stale by source time. Its returned
+`freshness` is recomputed from `measuredAt` using `FRESHNESS_THRESHOLD_SECONDS`;
+recent fetch time does not imply fresh telemetry or confirmed grid status.
+
 Choose the minimum interval only after reviewing the account's call limits and
 measured upload cadence (ILL-74). The accepted numeric range is an input bound,
 **not permission to poll every second**. Keep refresh disabled until regional
@@ -108,11 +127,40 @@ Successful collection returns `200`:
 }
 ```
 
+An eligible recent-data cache hit also returns `200`; `telemetry` has the same
+shape as for a collection, but `refresh` identifies that no poll was made:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "refresh": { "outcome": "skipped", "reason": "data_recent" },
+    "telemetry": {
+      "source": "deye-cloud",
+      "grid": {
+        "status": "unknown",
+        "evidence": [],
+        "confidence": "unverified",
+        "voltageV": null,
+        "frequencyHz": null,
+        "powerW": null
+      },
+      "battery": { "socPercent": null, "powerW": null, "mode": "unknown" },
+      "home": { "powerW": null },
+      "measuredAt": "2026-01-01T00:00:00.000Z",
+      "fetchedAt": "2026-01-01T01:00:00.000Z",
+      "freshness": { "status": "stale", "ageSeconds": 3630 }
+    }
+  }
+}
+```
+
 `telemetry` is the stored public snapshot with independently preserved
 `measuredAt`, `fetchedAt` and freshly evaluated freshness, or `null` when no valid
 observation exists. The example shows unavailable source time with no prior valid
 observation; `null` is not a live device reading. Outcomes include `accepted`, `unverified`, `stale`, `replay`,
-`backward`, and unavailable timestamp reasons. A `200` does not establish new,
+`backward`, unavailable timestamp reasons, and the cache-hit outcome `skipped`
+with reason `data_recent`. A `200` does not establish new,
 fresh, or confirmed utility-grid evidence. Replay/backward/missing/invalid time
 does not overwrite a newer snapshot; failed collection makes effective reads
 unknown/unavailable while preserving stored measurements.

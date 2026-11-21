@@ -50,9 +50,14 @@ The gate does not deploy the Worker or access remote D1.
 
 ## Read-only monitor clients
 
-The Rune web dashboard and desktop subscriber, including WebSocket updates,
-OS notifications, and build instructions, are documented in
+The React web dashboard and Rune desktop subscriber, including WebSocket
+updates, OS notifications, and build instructions, are documented in
 [`clients/README.md`](clients/README.md).
+
+The web client has a separate `deye-monitor-web` Worker with a same-origin API
+proxy and Cloudflare Access JWT validation. Hosting and the required Access
+allowlist setup are documented in the client README; API tokens stay in Worker
+secrets rather than production browser code.
 
 ## Local signoff
 
