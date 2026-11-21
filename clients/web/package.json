@@ -10,7 +10,8 @@
     "types": "wrangler types --env-interface WorkerBindings --strict-vars false --env-file .dev.vars.example",
     "test": "tsx --test worker/*.test.mjs",
     "deploy:check": "npm run build && wrangler deploy --dry-run",
-    "deploy": "npm run build && wrangler deploy"
+    "deploy": "npm run build && wrangler deploy",
+    "lint": "oxlint ."
   },
   "dependencies": {
     "jose": "^6.2.18",
@@ -18,10 +19,13 @@
     "react-dom": "^19.1.0"
   },
   "devDependencies": {
+    "@cloudflare/oxlint-config": "^0.1.0",
     "@types/node": "^26.6.5",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.7",
     "@vitejs/plugin-react": "^5.0.0",
+    "oxlint": "^1.94.0",
+    "tsrs": "^0.25.0-ts7.1.0-beta",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3",
     "vite": "^7.1.12",
