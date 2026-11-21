@@ -13,7 +13,8 @@
     "deploy": "npm run build && wrangler deploy",
     "lint": "oxlint .",
     "format": "oxfmt --write .",
-    "format:check": "oxfmt --check ."
+    "format:check": "oxfmt --check .",
+    "prepare": "git config --local core.hooksPath clients/web/.githooks && chmod +x .githooks/pre-push"
   },
   "dependencies": {
     "jose": "^6.2.18",
