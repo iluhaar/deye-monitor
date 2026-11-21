@@ -33,7 +33,9 @@ test("Access gates assets and API; verified requests use the private proxy", asy
   }
   async function call(path, jwt, init = {}, bindings = env) {
     const headers = new Headers(init.headers);
-    if (jwt) headers.set("Cf-Access-Jwt-Assertion", jwt);
+    if (jwt) {
+      headers.set("Cf-Access-Jwt-Assertion", jwt);
+    }
     headers.set("CF-Connecting-IP", "192.0.2.1");
     return worker.fetch(new Request(`https://monitor.example.com${path}`, {
       ...init, headers,

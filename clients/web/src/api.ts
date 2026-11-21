@@ -1,6 +1,8 @@
+import { isRecord, isRefreshResult, isTelemetry } from "./api-validation";
+
 export interface GridReading {
   status: "online" | "offline" | "unknown";
-  evidence: string[];
+  evidence: Array<string>;
   confidence: "confirmed" | "unverified";
   voltageV: number | null;
   frequencyHz: number | null;
@@ -23,13 +25,7 @@ export interface Telemetry {
   freshness: { status: "fresh" | "stale" | "unavailable"; ageSeconds: number | null };
 }
 
-interface ApiEnvelope<T> {
-  ok: boolean;
-  data?: T;
-  error?: { code?: string; message?: string };
-}
-
-interface RefreshResult {
+export interface RefreshResult {
   refresh?: { outcome?: string; reason?: string };
 }
 
@@ -47,19 +43,30 @@ const bearerToken = import.meta.env.VITE_API_BEARER_TOKEN?.trim() ?? "";
 const refreshToken = import.meta.env.VITE_REFRESH_TOKEN?.trim() ?? "";
 
 export function configurationIssue(needsRefresh = false): string | null {
-  if (!import.meta.env.DEV) return null;
-  if (!bearerToken) return "Set VITE_API_BEARER_TOKEN in clients/web/.env.local to connect.";
+  if (!import.meta.env.DEV) {
+    return null;
+  }
+  if (!bearerToken) {
+    return "Set VITE_API_BEARER_TOKEN in clients/web/.env.local to connect.";
+  }
   if (needsRefresh && !refreshToken) {
     return "Set VITE_REFRESH_TOKEN in clients/web/.env.local to enable refresh.";
   }
   return null;
 }
 
-async function request<T>(path: string, init: RequestInit = {}, needsRefresh = false): Promise<T> {
+async function request<T>(
+  path: string,
+  validate: (value: unknown) => value is T,
+  init: RequestInit = {},
+  needsRefresh = false,
+): Promise<T> {
   const headers = new Headers(init.headers);
   if (import.meta.env.DEV) {
     headers.set("Authorization", `Bearer ${bearerToken}`);
-    if (needsRefresh) headers.set("X-Refresh-Token", refreshToken);
+    if (needsRefresh) {
+      headers.set("X-Refresh-Token", refreshToken);
+    }
   }
 
   let response: Response;
@@ -80,23 +87,25 @@ async function request<T>(path: string, init: RequestInit = {}, needsRefresh = f
     throw new ApiError(`The server returned an unreadable response (${response.status}).`);
   }
 
-  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+  if (!isRecord(payload)) {
     throw new ApiError(`The server returned an invalid response (${response.status}).`);
   }
-  const envelope = payload as ApiEnvelope<T>;
-
-  if (!response.ok || envelope.ok !== true) {
+  if (!response.ok || payload.ok !== true) {
+    const error = isRecord(payload.error) ? payload.error : {};
     throw new ApiError(
-      envelope.error?.message ?? `The server returned an error (${response.status}).`,
-      envelope.error?.code,
+      typeof error.message === "string" ? error.message : `The server returned an error (${response.status}).`,
+      typeof error.code === "string" ? error.code : undefined,
     );
   }
 
-  return envelope.data as T;
+  if (!validate(payload.data)) {
+    throw new ApiError(`The server returned invalid data (${response.status}).`);
+  }
+  return payload.data;
 }
 
 export function readTelemetry(): Promise<Telemetry | null> {
-  return request<Telemetry | null>("telemetry");
+  return request("telemetry", isTelemetry);
 }
 
 export async function refreshTelemetry(): Promise<{
@@ -106,7 +115,7 @@ export async function refreshTelemetry(): Promise<{
   let warning: string | null = null;
 
   try {
-    const result = await request<RefreshResult>("refresh", { method: "POST" }, true);
+    const result = await request("refresh", isRefreshResult, { method: "POST" }, true);
     if (result.refresh?.outcome === "skipped" && result.refresh.reason === "data_recent") {
       warning = "The server fetched data recently, so refresh was skipped. Showing the latest stored readings.";
     }

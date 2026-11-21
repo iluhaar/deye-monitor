@@ -13,7 +13,9 @@ function failure(status: number, code: string, message: string): Response {
 }
 
 function requestHasBody(request: Request): boolean {
-  if (request.headers.has("Transfer-Encoding")) return true;
+  if (request.headers.has("Transfer-Encoding")) {
+    return true;
+  }
   const contentLength = request.headers.get("Content-Length");
   // Workerd can expose a non-null, empty POST stream for Content-Length: 0.
   // Use HTTP framing, matching the API server's no-body validation.
@@ -49,7 +51,9 @@ export async function handleAuthenticated(request: Request, env: Env): Promise<R
   if (url.pathname === "/api" || url.pathname.startsWith("/api/")) {
     const telemetry = url.pathname === "/api/v1/telemetry" && request.method === "GET";
     const refresh = url.pathname === "/api/v1/refresh" && request.method === "POST";
-    if (!telemetry && !refresh) return failure(404, "NOT_FOUND", "Not found");
+    if (!telemetry && !refresh) {
+      return failure(404, "NOT_FOUND", "Not found");
+    }
     if (url.search || (refresh && requestHasBody(request))) {
       return failure(400, "INVALID_REQUEST", "Query parameters and request bodies are not supported");
     }
@@ -61,7 +65,9 @@ export async function handleAuthenticated(request: Request, env: Env): Promise<R
       return failure(503, "UNAVAILABLE", "API credentials are not configured");
     }
     const ip = request.headers.get("CF-Connecting-IP");
-    if (!ip) return failure(503, "UNAVAILABLE", "Client identity unavailable");
+    if (!ip) {
+      return failure(503, "UNAVAILABLE", "Client identity unavailable");
+    }
     // Build a fresh header set: never forward browser cookies or supplied credentials.
     const headers = new Headers({
       Authorization: `Bearer ${env.API_BEARER_TOKEN}`,

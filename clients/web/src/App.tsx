@@ -1,20 +1,24 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   configurationIssue,
   readTelemetry,
   refreshTelemetry,
-  type Telemetry,
 } from "./api";
+import type { Telemetry } from "./api";
 
 type Operation = "loading" | "refreshing" | null;
 
 function formatNumber(value: number | null, unit: string): string {
-  if (value === null || !Number.isFinite(value)) return "—";
+  if (value === null || !Number.isFinite(value)) {
+    return "—";
+  }
   return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value)} ${unit}`;
 }
 
 function formatTimestamp(value: string | null): string {
-  if (!value) return "Not available";
+  if (!value) {
+    return "Not available";
+  }
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
@@ -22,17 +26,20 @@ function formatTimestamp(value: string | null): string {
 function formatAge(ageSeconds: number): string {
   const totalSeconds = Math.floor(Math.max(0, ageSeconds));
   const units = [
-    { value: Math.floor(totalSeconds / 86400), label: "day" },
-    { value: Math.floor((totalSeconds % 86400) / 3600), label: "hour" },
+    { value: Math.floor(totalSeconds / 86_400), label: "day" },
+    { value: Math.floor((totalSeconds % 86_400) / 3600), label: "hour" },
     { value: Math.floor((totalSeconds % 3600) / 60), label: "minute" },
     { value: totalSeconds % 60, label: "second" },
   ]
-    .filter(({ value }) => value > 0)
-    .map(({ value, label }) => `${value} ${label}${value === 1 ? "" : "s"}`);
+    .flatMap(({ value, label }) => value > 0 ? [`${value} ${label}${value === 1 ? "" : "s"}`] : []);
 
-  if (units.length === 0) return "0 seconds";
-  if (units.length === 1) return units[0];
-  return `${units.slice(0, -1).join(", ")} and ${units[units.length - 1]}`;
+  if (units.length === 0) {
+    return "0 seconds";
+  }
+  if (units.length === 1) {
+    return units[0];
+  }
+  return `${units.slice(0, -1).join(", ")} and ${units.at(-1)}`;
 }
 
 function displayMode(mode: string): string {
@@ -41,40 +48,47 @@ function displayMode(mode: string): string {
 
 function App() {
   const [telemetry, setTelemetry] = useState<Telemetry | null>(null);
-  const [operation, setOperation] = useState<Operation>("loading");
-  const [error, setError] = useState<string | null>(null);
+  const [operation, setOperation] = useState<Operation>(() => configurationIssue() ? null : "loading");
+  const [error, setError] = useState<string | null>(() => configurationIssue());
   const [notice, setNotice] = useState<string | null>(null);
   const busy = useRef(false);
 
-  const loadInitial = useCallback(async () => {
-    if (busy.current) return;
-    busy.current = true;
-
-    const issue = configurationIssue();
-    if (issue) {
-      setError(issue);
-      setOperation(null);
-      busy.current = false;
+  useEffect(() => {
+    if (configurationIssue()) {
       return;
     }
+    let active = true;
+    busy.current = true;
 
-    try {
-      setTelemetry(await readTelemetry());
-      setError(null);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to read inverter data.");
-    } finally {
-      setOperation(null);
+    void readTelemetry().then(
+      (reading) => {
+        if (active) {
+          setTelemetry(reading);
+          setError(null);
+        }
+      },
+      (error_: unknown) => {
+        if (active) {
+          setError(error_ instanceof Error ? error_.message : "Unable to read inverter data.");
+        }
+      },
+    ).finally(() => {
+      if (active) {
+        setOperation(null);
+        busy.current = false;
+      }
+    });
+
+    return () => {
+      active = false;
       busy.current = false;
-    }
+    };
   }, []);
 
-  useEffect(() => {
-    void loadInitial();
-  }, [loadInitial]);
-
   const refresh = async () => {
-    if (busy.current) return;
+    if (busy.current) {
+      return;
+    }
     setNotice(null);
     const issue = configurationIssue(true);
     if (issue) {
@@ -90,8 +104,8 @@ function App() {
       const result = await refreshTelemetry();
       setTelemetry(result.telemetry);
       setNotice(result.warning);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to refresh inverter data.");
+    } catch (error_) {
+      setError(error_ instanceof Error ? error_.message : "Unable to refresh inverter data.");
     } finally {
       setOperation(null);
       busy.current = false;
