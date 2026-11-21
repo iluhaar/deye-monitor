@@ -1,7 +1,7 @@
 {
   "name": "deye-monitor-web",
-  "private": true,
   "version": "0.1.0",
+  "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,7 +11,9 @@
     "test": "tsx --test worker/*.test.mjs src/*.test.mjs",
     "deploy:check": "npm run build && wrangler deploy --dry-run",
     "deploy": "npm run build && wrangler deploy",
-    "lint": "oxlint ."
+    "lint": "oxlint .",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check ."
   },
   "dependencies": {
     "jose": "^6.2.18",
@@ -24,6 +26,7 @@
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.7",
     "@vitejs/plugin-react": "^5.0.0",
+    "oxfmt": "^0.79.0",
     "oxlint": "^1.94.0",
     "tsrs": "^0.25.0-ts7.1.0-beta",
     "tsx": "^4.23.15",

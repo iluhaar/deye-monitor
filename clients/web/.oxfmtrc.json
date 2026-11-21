@@ -1,0 +1,10 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "ignorePatterns": [
+    "node_modules/**",
+    "dist/**",
+    ".wrangler/**",
+    "worker-configuration.d.ts",
+    "package-lock.json"
+  ]
+}
