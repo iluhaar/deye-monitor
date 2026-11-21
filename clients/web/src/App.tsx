@@ -115,6 +115,7 @@ function App() {
   };
 
   const refreshIssue = configurationIssue(true);
+  const measurementAgeSeconds = telemetry?.freshness.ageSeconds;
 
   return (
     <main className="page">
@@ -202,19 +203,18 @@ function App() {
 
       <footer className="timestamps">
         <p>
-          <span>Measured</span>
+          <span>Inverter measurement time</span>
           {formatTimestamp(telemetry?.measuredAt ?? null)}
         </p>
         <p>
-          <span>Server fetched</span>
+          <span>Last retrieved from Deye</span>
           {formatTimestamp(telemetry?.fetchedAt ?? null)}
         </p>
         <p>
-          <span>Measurement freshness</span>
-          {telemetry?.freshness.status ?? "Unavailable"}
-          {telemetry?.freshness.ageSeconds !== null &&
-            telemetry?.freshness.ageSeconds !== undefined &&
-            ` · ${formatAge(telemetry.freshness.ageSeconds)}`}
+          <span>Measurement age</span>
+          {measurementAgeSeconds === null || measurementAgeSeconds === undefined
+            ? "Not available"
+            : formatAge(measurementAgeSeconds)}
         </p>
       </footer>
     </main>

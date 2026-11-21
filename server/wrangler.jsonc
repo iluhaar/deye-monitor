@@ -28,7 +28,7 @@
     }
   ],
   "vars": {
-    "FRESHNESS_THRESHOLD_SECONDS": "180"
+    "FRESHNESS_THRESHOLD_SECONDS": "60"
   },
   "env": {
     "production": {
@@ -56,7 +56,7 @@
         }
       ],
       "vars": {
-        "FRESHNESS_THRESHOLD_SECONDS": "180"
+        "FRESHNESS_THRESHOLD_SECONDS": "60"
       }
     }
   }

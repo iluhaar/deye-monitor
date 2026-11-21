@@ -6,7 +6,7 @@ import type {
   TelemetrySnapshot,
 } from "./telemetry"
 
-export const DEFAULT_FRESHNESS_THRESHOLD_SECONDS = 180
+export const DEFAULT_FRESHNESS_THRESHOLD_SECONDS = 60
 
 export type FreshnessReason =
   | "missing_timestamp"
