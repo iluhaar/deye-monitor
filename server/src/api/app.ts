@@ -418,7 +418,7 @@ export function createApp(options: AppOptions = {}) {
       const cacheAgeMs = nowMs - fetchedAtMs
 
       if (Number.isFinite(nowMs) && Number.isFinite(fetchedAtMs) &&
-        cacheAgeMs >= 0 && cacheAgeMs <= RECENT_REFRESH_CACHE_MS) {
+        cacheAgeMs >= 0 && cacheAgeMs < RECENT_REFRESH_CACHE_MS) {
         const evaluated = evaluate(currentSnapshot, context.env, nowMs)
 
         return context.json(success({

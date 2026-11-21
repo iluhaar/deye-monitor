@@ -50,6 +50,7 @@ export function isTelemetry(value: unknown): value is Telemetry | null {
 export function isRefreshResult(value: unknown): value is RefreshResult {
   return (
     isRecord(value) &&
+    isTelemetry(value.telemetry) &&
     (value.refresh === undefined ||
       (isRecord(value.refresh) &&
         (value.refresh.outcome === undefined || typeof value.refresh.outcome === "string") &&

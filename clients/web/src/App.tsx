@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { configurationIssue, readTelemetry, refreshTelemetry } from "./api";
+import { configurationIssue, refreshTelemetry } from "./api";
 import type { Telemetry } from "./api";
 
 type Operation = "loading" | "refreshing" | null;
@@ -46,24 +46,25 @@ function displayMode(mode: string): string {
 function App() {
   const [telemetry, setTelemetry] = useState<Telemetry | null>(null);
   const [operation, setOperation] = useState<Operation>(() =>
-    configurationIssue() ? null : "loading",
+    configurationIssue(true) ? null : "loading",
   );
-  const [error, setError] = useState<string | null>(() => configurationIssue());
+  const [error, setError] = useState<string | null>(() => configurationIssue(true));
   const [notice, setNotice] = useState<string | null>(null);
   const busy = useRef(false);
 
   useEffect(() => {
-    if (configurationIssue()) {
+    if (configurationIssue(true)) {
       return;
     }
     let active = true;
     busy.current = true;
 
-    void readTelemetry()
+    void refreshTelemetry()
       .then(
-        (reading) => {
+        (result) => {
           if (active) {
-            setTelemetry(reading);
+            setTelemetry(result.telemetry);
+            setNotice(result.warning);
             setError(null);
           }
         },

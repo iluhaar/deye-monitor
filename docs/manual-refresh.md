@@ -93,8 +93,8 @@ configuration cannot create a station or trigger upstream requests.
 
 After authorization, request validation, and refresh configuration checks, the
 handler reads the current snapshot before starting upstream polling. A parseable
-`fetchedAt` is a cache hit when its age is from 0 through 60,000 milliseconds,
-inclusive. Future or invalid timestamps and a missing snapshot are not cache hits;
+`fetchedAt` is a cache hit when its age is at least 0 and less than 60,000 milliseconds.
+At exactly 60 seconds, the server polls Deye. Future or invalid timestamps and a missing snapshot are not cache hits;
 storage read failures return an error rather than skipping. A cache hit returns
 HTTP 200 with the current snapshot and does not acquire the refresh lease or call
 Deye. Actual polls continue to use the durable lease and configured minimum

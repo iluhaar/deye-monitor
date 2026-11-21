@@ -26,6 +26,7 @@ export interface Telemetry {
 }
 
 export interface RefreshResult {
+  telemetry: Telemetry | null;
   refresh?: { outcome?: string; reason?: string };
 }
 
@@ -39,11 +40,12 @@ export class ApiError extends Error {
   }
 }
 
-const bearerToken = import.meta.env.VITE_API_BEARER_TOKEN?.trim() ?? "";
-const refreshToken = import.meta.env.VITE_REFRESH_TOKEN?.trim() ?? "";
+const environment = import.meta.env ?? {};
+const bearerToken = environment.VITE_API_BEARER_TOKEN?.trim() ?? "";
+const refreshToken = environment.VITE_REFRESH_TOKEN?.trim() ?? "";
 
 export function configurationIssue(needsRefresh = false): string | null {
-  if (!import.meta.env.DEV) {
+  if (!environment.DEV) {
     return null;
   }
   if (!bearerToken) {
@@ -62,7 +64,7 @@ async function request<T>(
   needsRefresh = false,
 ): Promise<T> {
   const headers = new Headers(init.headers);
-  if (import.meta.env.DEV) {
+  if (environment.DEV) {
     headers.set("Authorization", `Bearer ${bearerToken}`);
     if (needsRefresh) {
       headers.set("X-Refresh-Token", refreshToken);
@@ -114,24 +116,20 @@ export async function refreshTelemetry(): Promise<{
   telemetry: Telemetry | null;
   warning: string | null;
 }> {
-  let warning: string | null = null;
-
   try {
     const result = await request("refresh", isRefreshResult, { method: "POST" }, true);
-    if (result.refresh?.outcome === "skipped" && result.refresh.reason === "data_recent") {
-      warning =
-        "The server fetched data recently, so refresh was skipped. Showing the latest stored readings.";
-    }
+    return { telemetry: result.telemetry, warning: null };
   } catch (error) {
     if (
       error instanceof ApiError &&
       (error.code === "REFRESH_THROTTLED" || error.code === "REFRESH_IN_PROGRESS")
     ) {
-      warning = `${error.message}. Showing the latest stored readings.`;
+      return {
+        telemetry: await readTelemetry(),
+        warning: `${error.message}. Showing the latest stored readings.`,
+      };
     } else {
       throw error;
     }
   }
-
-  return { telemetry: await readTelemetry(), warning };
 }

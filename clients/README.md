@@ -24,12 +24,14 @@ API origin to override the development proxy target. From
 npm run dev
 ```
 
-The page reads `GET /api/v1/telemetry` on startup. **Refresh** sends
-`POST /api/v1/refresh` with the bearer token and `X-Refresh-Token`, then reads
-`GET /api/v1/telemetry` again. A server fetch from within the previous 60
-seconds causes refresh to be skipped as `data_recent`. Otherwise, a separate
-server-configured refresh interval of 1–3600 seconds may throttle the request.
-In either case, the page reads and displays the latest stored readings.
+Both startup and **Refresh** send `POST /api/v1/refresh` with the bearer token
+and `X-Refresh-Token`. The server returns the stored snapshot if it was fetched
+less than 60 seconds ago; otherwise (including no snapshot), it requests data
+from Deye Cloud, stores it, and returns it. The page displays the telemetry in
+that response without a redundant read or a warning for a normal cache hit.
+The durable refresh lease and configured upstream throttle still apply. If a
+refresh is already running or throttled, the page reads the stored snapshot
+with `GET /api/v1/telemetry` and displays a warning.
 
 The client shows grid state, voltage/frequency/power, battery charge and power,
 house load, freshness, and measurement/fetch times. The current server telemetry

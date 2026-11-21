@@ -51,9 +51,10 @@ test("telemetry guard rejects missing data and malformed nested fields", () => {
 
 test("refresh guard accepts optional metadata and rejects malformed responses", () => {
   for (const value of [
-    {},
-    { refresh: {} },
+    { telemetry: null },
+    { telemetry, refresh: {} },
     {
+      telemetry,
       refresh: { outcome: "skipped", reason: "data_recent" },
     },
   ]) {
@@ -63,11 +64,14 @@ test("refresh guard accepts optional metadata and rejects malformed responses", 
     undefined,
     null,
     [],
-    { refresh: null },
+    {},
+    { telemetry: {} },
+    { telemetry: null, refresh: null },
     {
+      telemetry,
       refresh: { outcome: 1 },
     },
-    { refresh: { reason: false } },
+    { telemetry, refresh: { reason: false } },
   ]) {
     assert.equal(isRefreshResult(value), false);
   }
