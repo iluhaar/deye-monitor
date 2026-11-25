@@ -100,8 +100,9 @@ export function evaluateFreshness(
 }
 
 /**
- * Re-evaluate a stored snapshot without changing the stored object. Stale,
- * missing, future, or unverified data can never produce online/offline.
+ * Re-evaluate freshness for a stored snapshot without rewriting its grid
+ * status. A stale, missing, or failed collection stays visible through
+ * freshness; the last classified online/offline/unknown status is kept.
  */
 export function evaluateSnapshot(
   snapshot: TelemetrySnapshot,
@@ -111,18 +112,14 @@ export function evaluateSnapshot(
   const freshness = evaluateFreshness(snapshot, nowMs, thresholdSeconds)
 
   if (snapshot.collectionAvailable === false) {
-    return { ...snapshot, grid: { ...snapshot.grid, status: "unknown" },
-      freshness: { status: "unavailable", ageSeconds: freshness.ageSeconds } }
+    return {
+      ...snapshot,
+      freshness: { status: "unavailable", ageSeconds: freshness.ageSeconds },
+    }
   }
-
-  const status: TelemetrySnapshot["grid"]["status"] =
-    freshness.status === "fresh" && hasVerifiedGridEvidence(snapshot.grid)
-      ? snapshot.grid.status
-      : "unknown"
 
   return {
     ...snapshot,
-    grid: { ...snapshot.grid, status },
     freshness: toFreshnessInfo(freshness),
   }
 }

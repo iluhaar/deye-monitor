@@ -113,7 +113,7 @@ interface TelemetrySnapshot {
 }
 ```
 
-Do not invent measurements where the upstream payload omits them; use `null`. Keep the measured-at and fetched-at timestamps separate. Consider a configurable freshness threshold (start at three minutes for validation; tune based on actual Deye reporting cadence). If telemetry is older than this limit or lacks reliable grid evidence, effective grid status is `unknown`. Preserve the last verified state separately as historical context, not as the current answer.
+Do not invent measurements where the upstream payload omits them; use `null`. Keep the measured-at and fetched-at timestamps separate. Consider a configurable freshness threshold (start at three minutes for validation; tune based on actual Deye reporting cadence). If telemetry is older than this limit or lacks reliable grid evidence, report that through freshness and keep showing the latest stored grid status. Do not rewrite that status to `unknown`. Preserve the last verified state separately as historical context for transitions, not as a replacement for the latest reading.
 
 ## 6. Refresh and transition logic
 

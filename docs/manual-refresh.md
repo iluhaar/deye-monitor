@@ -104,7 +104,7 @@ The cache age uses `fetchedAt` (when the server received the upstream response),
 not `measuredAt` (when Deye says the readings were collected). Consequently, a
 recently fetched snapshot can still be stale by source time. Its returned
 `freshness` is recomputed from `measuredAt` using `FRESHNESS_THRESHOLD_SECONDS`;
-recent fetch time does not imply fresh telemetry or confirmed grid status.
+recent fetch time does not imply fresh telemetry or a confirmed grid transition. The returned grid status is the latest stored classification.
 
 Choose the minimum interval only after reviewing the account's call limits and
 measured upload cadence (ILL-74). The accepted numeric range is an input bound,

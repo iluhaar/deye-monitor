@@ -1,6 +1,6 @@
 import type { D1Database } from "@cloudflare/workers-types"
 import { Effect, Layer, Schema } from "effect"
-import { evaluateFreshness, evaluateSnapshot } from "../domain/grid-status"
+import { evaluateFreshness, hasVerifiedGridEvidence } from "../domain/grid-status"
 import type { TelemetrySnapshot } from "../domain/telemetry"
 import { IngestionStorage, IngestionStorageError } from "../services/IngestionStorage"
 import type { IngestionOutcome, IngestionStore } from "../services/IngestionStorage"
@@ -109,8 +109,8 @@ export function makeIngestionStorage(
         return outcome
       }
 
-      const evaluated = evaluateSnapshot(snapshot, nowMs, threshold)
-      const confirmed = evaluated.grid.status !== "unknown"
+      const confirmed =
+        freshness.status === "fresh" && hasVerifiedGridEvidence(snapshot.grid)
 
       const outcome: IngestionOutcome = freshness.status === "stale" ? "stale"
         : confirmed ? "accepted" : "unverified"
@@ -140,7 +140,7 @@ export function makeIngestionStorage(
         home_power_w=excluded.home_power_w, measured_at=excluded.measured_at,
         fetched_at=excluded.fetched_at, freshness_status=excluded.freshness_status,
         mapping_revision=excluded.mapping_revision, stored_at=excluded.stored_at`)
-        .bind(lease.stationId, snapshot.source, evaluated.grid.status,
+        .bind(lease.stationId, snapshot.source, snapshot.grid.status,
           JSON.stringify(snapshot.grid.evidence), snapshot.grid.confidence,
           snapshot.grid.voltageV, snapshot.grid.frequencyHz, snapshot.grid.powerW,
           snapshot.battery.socPercent, snapshot.battery.powerW, snapshot.battery.mode,
@@ -157,13 +157,13 @@ export function makeIngestionStorage(
       let eventId: string | null = null
 
       if (confirmed) {
-        if (context !== null && context.status !== evaluated.grid.status) {
+        if (context !== null && context.status !== snapshot.grid.status) {
           eventId = crypto.randomUUID()
           writes.push(db.prepare(`INSERT INTO grid_events (
             id, station_id, status, observed_at, previous_status, previous_observed_at,
             evidence_json, source, idempotency_key, created_at, gap_since
           ) VALUES (?, ?, ?, ?, ?, ?, ?, 'deye-cloud', ?, ?, ?)`)
-            .bind(eventId, lease.stationId, evaluated.grid.status, measuredAt,
+            .bind(eventId, lease.stationId, snapshot.grid.status, measuredAt,
               context.status, context.observed_at, JSON.stringify(snapshot.grid.evidence),
               observationKey(lease.stationId, measuredAt), poll.completedAt, context.gap_since))
         }
@@ -171,7 +171,7 @@ export function makeIngestionStorage(
         writes.push(db.prepare(`INSERT INTO grid_context (station_id, status, observed_at, gap_since)
           VALUES (?, ?, ?, NULL) ON CONFLICT(station_id) DO UPDATE SET
           status=excluded.status, observed_at=excluded.observed_at, gap_since=NULL`)
-          .bind(lease.stationId, evaluated.grid.status, measuredAt))
+          .bind(lease.stationId, snapshot.grid.status, measuredAt))
       } else {
         writes.push(db.prepare(`UPDATE grid_context SET gap_since=COALESCE(gap_since, ?)
           WHERE station_id=?`).bind(poll.completedAt, lease.stationId))

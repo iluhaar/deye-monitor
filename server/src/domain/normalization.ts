@@ -483,8 +483,8 @@ export function normalizeDeyeDeviceLatest(
     mappingRevision: options.mappingRevision ?? DEYE_DEVICE_LATEST_MAPPING_REVISION,
     powerSignConvention: UNVERIFIED_POWER_SIGN_CONVENTION,
     grid: {
-      // Current-state freshness is enforced by evaluateSnapshot on ingestion
-      // and reads. Ambiguous measurement combinations remain unknown.
+      // Ambiguous measurement combinations remain unknown. Freshness is
+      // reported separately and does not rewrite this status.
       status: gridOffline ? "offline" : gridOnline ? "online" : "unknown",
       evidence,
       confidence: gridOffline || gridOnline ? "confirmed" : "unverified",

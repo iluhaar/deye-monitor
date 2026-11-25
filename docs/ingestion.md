@@ -40,8 +40,9 @@ account limits remain a separate activation check.
 - Subsequent fresh, verified changes create one event. Same-state observations
   advance the prior confirmed time without emitting another event.
 - Unknown/unverified and newer stale observations may replace the latest
-  snapshot, but never replace confirmed context or emit grid events. They mark
-  an existing confirmed context with the first detected gap time.
+  snapshot with the normalizer's classified status, but never replace confirmed
+  context or emit grid events. They mark an existing confirmed context with the
+  first detected gap time.
 - Equal/backward source times preserve the snapshot and confirmed observation.
   They record a replay/backward poll outcome and mark a gap, not an outage.
 - Missing, invalid, inconsistent or future timestamps preserve the snapshot and
@@ -68,11 +69,14 @@ credential, raw response or upstream exception text is stored or logged.
 ## Read-side failure semantics
 
 The D1 read layer derives internal collection availability from the most recent
-fenced poll. After an error/unavailable collection, effective grid state becomes
-`unknown` and freshness is `unavailable`, while measurement/fetch timestamps,
-values and source age remain those of the stored observation. Successful later
-collection restores ordinary freshness evaluation. This internal flag is not
-added to public response contracts, and reads do not mutate storage.
+fenced poll. After an error/unavailable collection, freshness is `unavailable`,
+while grid status, measurement/fetch timestamps, values and source age remain
+those of the stored observation. Successful later collection restores ordinary
+freshness evaluation. Reads never replace a stored online or offline status
+with `unknown` because the observation is stale, unverified, or the latest
+collection failed. `unknown` is only the status stored when the measurement
+itself was ambiguous. This internal flag is not added to public response
+contracts, and reads do not mutate storage.
 
 Retention must preserve each station's latest poll (or an equivalent durable
 collection outcome), guard watermark/epoch and confirmed context. Deleting these
