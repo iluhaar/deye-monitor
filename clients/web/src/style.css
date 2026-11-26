@@ -300,6 +300,7 @@ h1 {
   font-weight: 650;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
+  transform: translateX(-50%);
 }
 
 .schedule-slot-label::before {
@@ -312,29 +313,6 @@ h1 {
   border-left: 5px solid transparent;
   transform: translateX(-50%);
   color: inherit;
-}
-
-.schedule-slot-label.is-start {
-  transform: none;
-}
-
-.schedule-slot-label.is-start::before {
-  left: 16px;
-  transform: none;
-}
-
-.schedule-slot-label.is-center {
-  transform: translateX(-50%);
-}
-
-.schedule-slot-label.is-end {
-  transform: translateX(-100%);
-}
-
-.schedule-slot-label.is-end::before {
-  left: auto;
-  right: 11px;
-  transform: none;
 }
 
 .schedule-slot-label-off {
