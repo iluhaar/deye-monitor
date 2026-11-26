@@ -269,31 +269,90 @@ h1 {
   transform: translateX(-1px);
 }
 
-.schedule-hours {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 6px;
+.schedule-slot-labels {
+  position: relative;
+  height: 36px;
+  margin-top: 10px;
+}
+
+.schedule-hours-end {
+  position: absolute;
+  top: 8px;
   color: #7b8794;
   font-size: 0.75rem;
   font-variant-numeric: tabular-nums;
 }
 
-.schedule-periods {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 16px 0 0;
-  padding: 0;
-  list-style: none;
+.schedule-hours-end.is-start {
+  left: 0;
 }
 
-.schedule-periods li {
+.schedule-hours-end.is-end {
+  right: 0;
+}
+
+.schedule-slot-label {
+  position: absolute;
+  top: 0;
   padding: 6px 10px;
   border-radius: 8px;
+  font-size: 0.82rem;
+  font-weight: 650;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.schedule-slot-label::before {
+  content: "";
+  position: absolute;
+  top: -6px;
+  left: 50%;
+  border-right: 5px solid transparent;
+  border-bottom: 6px solid currentcolor;
+  border-left: 5px solid transparent;
+  transform: translateX(-50%);
+  color: inherit;
+}
+
+.schedule-slot-label.is-start {
+  transform: none;
+}
+
+.schedule-slot-label.is-start::before {
+  left: 16px;
+  transform: none;
+}
+
+.schedule-slot-label.is-center {
+  transform: translateX(-50%);
+}
+
+.schedule-slot-label.is-end {
+  transform: translateX(-100%);
+}
+
+.schedule-slot-label.is-end::before {
+  left: auto;
+  right: 11px;
+  transform: none;
+}
+
+.schedule-slot-label-off {
   color: #923b32;
   background: #fbe9e6;
-  font-weight: 650;
-  font-variant-numeric: tabular-nums;
+}
+
+.schedule-slot-label-off::before {
+  color: #fbe9e6;
+}
+
+.schedule-slot-label-maybe {
+  color: #8a5a12;
+  background: #f8ead0;
+}
+
+.schedule-slot-label-maybe::before {
+  color: #f8ead0;
 }
 
 @media (max-width: 600px) {

@@ -4,7 +4,6 @@ import type { Telemetry } from "./api";
 import ScheduleBar from "./ScheduleBar";
 import {
   describeSchedule,
-  formatScheduleMinute,
   kyivMinuteOfDay,
   outageGroupLabel,
   readTodayOutageSchedule,
@@ -172,7 +171,6 @@ function App() {
   const refreshIssue = configurationIssue(true);
   const measurementAgeSeconds = telemetry?.freshness.ageSeconds;
   const scheduleView = schedule ? describeSchedule(schedule) : null;
-  const offPeriods = schedule?.slots.filter((slot) => slot.kind === "off") ?? [];
   const showNow = Boolean(scheduleView?.showBar && scheduleView.tone !== "neutral");
   const scheduleStatusClass =
     scheduleView?.tone === "off" ? "offline" : scheduleView?.tone === "on" ? "online" : "neutral";
@@ -282,15 +280,6 @@ function App() {
               {scheduleError && <p className="detail-note">{scheduleError}</p>}
               {scheduleView.showBar && (
                 <ScheduleBar slots={schedule.slots} mark={showNow ? kyivMinuteOfDay() : null} />
-              )}
-              {offPeriods.length > 0 && (
-                <ul className="schedule-periods">
-                  {offPeriods.map((period) => (
-                    <li key={`${period.start}-${period.end}`}>
-                      {formatScheduleMinute(period.start)}–{formatScheduleMinute(period.end)}
-                    </li>
-                  ))}
-                </ul>
               )}
               <p className="freshness-note">
                 YASNO · Kyiv time

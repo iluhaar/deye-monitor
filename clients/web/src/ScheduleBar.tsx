@@ -1,4 +1,15 @@
+import { formatScheduleMinute } from "./outage-schedule";
 import type { OutageSlot } from "./outage-schedule";
+
+function labelAlign(center: number): "start" | "center" | "end" {
+  if (center < 0.18) {
+    return "start";
+  }
+  if (center > 0.82) {
+    return "end";
+  }
+  return "center";
+}
 
 export default function ScheduleBar({
   slots,
@@ -7,6 +18,8 @@ export default function ScheduleBar({
   slots: Array<OutageSlot>;
   mark: number | null;
 }) {
+  const labeled = slots.filter((slot) => slot.kind !== "on");
+
   return (
     <div className="schedule-track">
       <div className="schedule-bar" aria-hidden="true">
@@ -24,9 +37,21 @@ export default function ScheduleBar({
           <span className="schedule-now" style={{ left: `${(mark / 1440) * 100}%` }} />
         )}
       </div>
-      <div className="schedule-hours">
-        <span>00:00</span>
-        <span>24:00</span>
+      <div className="schedule-slot-labels">
+        <span className="schedule-hours-end is-start">00:00</span>
+        <span className="schedule-hours-end is-end">24:00</span>
+        {labeled.map((slot) => {
+          const center = (slot.start + slot.end) / 2 / 1440;
+          return (
+            <span
+              key={`${slot.start}-${slot.end}`}
+              className={`schedule-slot-label schedule-slot-label-${slot.kind} is-${labelAlign(center)}`}
+              style={{ left: `${center * 100}%` }}
+            >
+              {formatScheduleMinute(slot.start)}–{formatScheduleMinute(slot.end)}
+            </span>
+          );
+        })}
       </div>
     </div>
   );
