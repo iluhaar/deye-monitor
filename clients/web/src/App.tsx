@@ -170,12 +170,18 @@ function App() {
 
   const refreshIssue = configurationIssue(true);
   const measurementAgeSeconds = telemetry?.freshness.ageSeconds;
-  const scheduleView = schedule ? describeSchedule(schedule) : null;
+  const scheduleView = schedule
+    ? describeSchedule(schedule, telemetry?.grid.status === "online")
+    : null;
   const showNow = Boolean(scheduleView?.showBar && scheduleView.tone !== "neutral");
   const scheduleStatusClass =
     scheduleView?.tone === "off" ? "offline" : scheduleView?.tone === "on" ? "online" : "neutral";
   const scheduleHeadlineClass =
-    scheduleView?.headline === "On" || scheduleView?.headline === "Off" ? "" : "unavailable";
+    scheduleView?.headline === "On" ||
+    scheduleView?.headline === "Off" ||
+    scheduleView?.headline === "Still on"
+      ? ""
+      : "unavailable";
 
   return (
     <main className="page">

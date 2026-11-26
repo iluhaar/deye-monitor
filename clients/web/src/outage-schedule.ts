@@ -180,7 +180,11 @@ function slotAt(slots: Array<OutageSlot>, minute: number): OutageSlot | null {
   return slots.find((slot) => minute >= slot.start && minute < slot.end) ?? null;
 }
 
-export function describeSchedule(schedule: TodayOutageSchedule, now = new Date()): ScheduleView {
+export function describeSchedule(
+  schedule: TodayOutageSchedule,
+  gridOnline = false,
+  now = new Date(),
+): ScheduleView {
   if (schedule.status === "missing") {
     return {
       headline: "Unavailable",
@@ -235,6 +239,14 @@ export function describeSchedule(schedule: TodayOutageSchedule, now = new Date()
   const current = slotAt(schedule.slots, kyivMinuteOfDay(now));
   const nextOff = off.find((slot) => slot.start > kyivMinuteOfDay(now));
   if (current?.kind === "off") {
+    if (gridOnline) {
+      return {
+        headline: "Still on",
+        detail: `Scheduled off until ${formatScheduleMinute(current.end)}`,
+        tone: "off",
+        showBar: true,
+      };
+    }
     return {
       headline: "Off",
       detail: `Until ${formatScheduleMinute(current.end)}`,
