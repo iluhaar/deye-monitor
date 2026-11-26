@@ -1,6 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { configurationIssue, refreshTelemetry } from "./api";
 import type { Telemetry } from "./api";
+import ScheduleBar from "./ScheduleBar";
+import {
+  describeSchedule,
+  formatScheduleMinute,
+  kyivMinuteOfDay,
+  outageGroupLabel,
+  readTodayOutageSchedule,
+} from "./outage-schedule";
+import type { TodayOutageSchedule } from "./outage-schedule";
 
 type Operation = "loading" | "refreshing" | null;
 
@@ -50,7 +59,23 @@ function App() {
   );
   const [error, setError] = useState<string | null>(() => configurationIssue(true));
   const [notice, setNotice] = useState<string | null>(null);
+  const [schedule, setSchedule] = useState<TodayOutageSchedule | null>(null);
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
+  const [scheduleLoading, setScheduleLoading] = useState(true);
   const busy = useRef(false);
+
+  const loadSchedule = async () => {
+    try {
+      setSchedule(await readTodayOutageSchedule());
+      setScheduleError(null);
+    } catch (error_) {
+      setScheduleError(
+        error_ instanceof Error ? error_.message : "Today's outage schedule is unavailable.",
+      );
+    } finally {
+      setScheduleLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (configurationIssue(true)) {
@@ -87,6 +112,34 @@ function App() {
     };
   }, []);
 
+  useEffect(() => {
+    let active = true;
+    void readTodayOutageSchedule()
+      .then(
+        (result) => {
+          if (active) {
+            setSchedule(result);
+            setScheduleError(null);
+          }
+        },
+        (error_: unknown) => {
+          if (active) {
+            setScheduleError(
+              error_ instanceof Error ? error_.message : "Today's outage schedule is unavailable.",
+            );
+          }
+        },
+      )
+      .finally(() => {
+        if (active) {
+          setScheduleLoading(false);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const refresh = async () => {
     if (busy.current) {
       return;
@@ -101,6 +154,7 @@ function App() {
     busy.current = true;
     setOperation("refreshing");
     setError(null);
+    const schedulePromise = loadSchedule();
 
     try {
       const result = await refreshTelemetry();
@@ -109,6 +163,7 @@ function App() {
     } catch (error_) {
       setError(error_ instanceof Error ? error_.message : "Unable to refresh inverter data.");
     } finally {
+      await schedulePromise;
       setOperation(null);
       busy.current = false;
     }
@@ -116,6 +171,13 @@ function App() {
 
   const refreshIssue = configurationIssue(true);
   const measurementAgeSeconds = telemetry?.freshness.ageSeconds;
+  const scheduleView = schedule ? describeSchedule(schedule) : null;
+  const offPeriods = schedule?.slots.filter((slot) => slot.kind === "off") ?? [];
+  const showNow = Boolean(scheduleView?.showBar && scheduleView.tone !== "neutral");
+  const scheduleStatusClass =
+    scheduleView?.tone === "off" ? "offline" : scheduleView?.tone === "on" ? "online" : "neutral";
+  const scheduleHeadlineClass =
+    scheduleView?.headline === "On" || scheduleView?.headline === "Off" ? "" : "unavailable";
 
   return (
     <main className="page">
@@ -198,6 +260,44 @@ function App() {
               <dd>{formatNumber(telemetry?.battery.powerW ?? null, "W")}</dd>
             </div>
           </dl>
+        </article>
+      </section>
+
+      <section className="schedule" aria-label="Today's outage schedule">
+        <article className="card">
+          <div className="card-heading">
+            <h2>Outage schedule</h2>
+            <span className={`status status-${scheduleStatusClass}`}>
+              {schedule ? outageGroupLabel(schedule.group) : "Group 4"}
+            </span>
+          </div>
+          {scheduleLoading && !schedule ? (
+            <p className="caption">Loading today&apos;s schedule…</p>
+          ) : scheduleError && !schedule ? (
+            <p className="detail-note">{scheduleError}</p>
+          ) : schedule && scheduleView ? (
+            <>
+              <p className={`main-value ${scheduleHeadlineClass}`}>{scheduleView.headline}</p>
+              <p className="caption">{scheduleView.detail}</p>
+              {scheduleError && <p className="detail-note">{scheduleError}</p>}
+              {scheduleView.showBar && (
+                <ScheduleBar slots={schedule.slots} mark={showNow ? kyivMinuteOfDay() : null} />
+              )}
+              {offPeriods.length > 0 && (
+                <ul className="schedule-periods">
+                  {offPeriods.map((period) => (
+                    <li key={`${period.start}-${period.end}`}>
+                      {formatScheduleMinute(period.start)}–{formatScheduleMinute(period.end)}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <p className="freshness-note">
+                YASNO · Kyiv time
+                {schedule.updatedOn ? ` · updated ${formatTimestamp(schedule.updatedOn)}` : ""}
+              </p>
+            </>
+          ) : null}
         </article>
       </section>
 

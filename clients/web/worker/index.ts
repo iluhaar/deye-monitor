@@ -2,6 +2,12 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
 
 type Env = WorkerBindings;
 
+// YASNO publishes the DTEK Kyiv Electrical Networks schedule. The browser cannot
+// call it: the response has no CORS headers.
+const YASNO_PLANNED_OUTAGES_URL =
+  "https://app.yasno.ua/api/blackout-service/public/shutdowns/regions/25/dsos/902/planned-outages";
+const MAX_SCHEDULE_BYTES = 1_000_000;
+
 // Cache signing keys, never request identity or credentials.
 const keySets = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
 
@@ -20,6 +26,49 @@ function requestHasBody(request: Request): boolean {
   // Workerd can expose a non-null, empty POST stream for Content-Length: 0.
   // Use HTTP framing, matching the API server's no-body validation.
   return contentLength !== null ? contentLength !== "0" : request.body !== null;
+}
+
+function isJsonObject(value: unknown): boolean {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+async function proxyPlannedOutages(): Promise<Response> {
+  let upstream: Response;
+  try {
+    upstream = await fetch(YASNO_PLANNED_OUTAGES_URL, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      redirect: "manual",
+    });
+  } catch {
+    return failure(502, "UPSTREAM_ERROR", "Outage schedule unavailable");
+  }
+  if (upstream.status >= 300 && upstream.status < 400) {
+    return failure(502, "UPSTREAM_ERROR", "Unexpected schedule redirect");
+  }
+  if (!upstream.ok) {
+    return failure(502, "UPSTREAM_ERROR", "Outage schedule unavailable");
+  }
+
+  const body = await upstream.text();
+  if (body.length > MAX_SCHEDULE_BYTES) {
+    return failure(502, "UPSTREAM_ERROR", "Outage schedule unavailable");
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return failure(502, "UPSTREAM_ERROR", "Outage schedule unavailable");
+  }
+  if (!isJsonObject(parsed)) {
+    return failure(502, "UPSTREAM_ERROR", "Outage schedule unavailable");
+  }
+  return Response.json(parsed, {
+    headers: {
+      "Cache-Control": "no-store",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
 }
 
 async function authorized(request: Request, env: Env): Promise<boolean> {
@@ -52,6 +101,19 @@ async function authorized(request: Request, env: Env): Promise<boolean> {
 export async function handleAuthenticated(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   if (url.pathname === "/api" || url.pathname.startsWith("/api/")) {
+    if (url.pathname === "/api/v1/outage-schedule") {
+      if (request.method !== "GET") {
+        return failure(404, "NOT_FOUND", "Not found");
+      }
+      if (url.search) {
+        return failure(
+          400,
+          "INVALID_REQUEST",
+          "Query parameters and request bodies are not supported",
+        );
+      }
+      return proxyPlannedOutages();
+    }
     const telemetry = url.pathname === "/api/v1/telemetry" && request.method === "GET";
     const refresh = url.pathname === "/api/v1/refresh" && request.method === "POST";
     if (!telemetry && !refresh) {

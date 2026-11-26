@@ -228,6 +228,74 @@ h1 {
   line-height: 1.5;
 }
 
+.schedule {
+  margin-top: 16px;
+}
+
+.schedule-track {
+  position: relative;
+}
+
+.schedule-bar {
+  position: relative;
+  height: 14px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e8eef2;
+}
+
+.schedule-segment,
+.schedule-now {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+}
+
+.schedule-on {
+  background: #d7efe4;
+}
+
+.schedule-off {
+  background: #e7a39c;
+}
+
+.schedule-maybe {
+  background: #f3d7a1;
+}
+
+.schedule-now {
+  width: 2px;
+  background: #18212b;
+  transform: translateX(-1px);
+}
+
+.schedule-hours {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+  color: #7b8794;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.schedule-periods {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.schedule-periods li {
+  padding: 6px 10px;
+  border-radius: 8px;
+  color: #923b32;
+  background: #fbe9e6;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
 @media (max-width: 600px) {
   .page {
     width: min(100% - 28px, 480px);
