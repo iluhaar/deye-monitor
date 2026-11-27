@@ -2,6 +2,7 @@ import { useRef } from "react";
 import { displayMode, formatAge, formatNumber, formatTimestamp } from "./helper";
 import Schedule from "./Schedule";
 import type { ScheduleReload } from "./Schedule";
+import ThemeToggle from "./ThemeToggle";
 import { useTelemetry } from "./useTelemetry";
 
 function App() {
@@ -17,14 +18,17 @@ function App() {
           <h1>Deye Monitor</h1>
           <p className="subtitle">Read-only inverter overview</p>
         </div>
-        <button
-          type="button"
-          className="refresh-button"
-          onClick={() => void refresh(() => reloadSchedule.current?.() ?? Promise.resolve())}
-          disabled={operation !== null || refreshIssue !== null}
-        >
-          {operation === "refreshing" ? "Refreshing…" : "Refresh"}
-        </button>
+        <div className="topbar-actions">
+          <ThemeToggle />
+          <button
+            type="button"
+            className="refresh-button"
+            onClick={() => void refresh(() => reloadSchedule.current?.() ?? Promise.resolve())}
+            disabled={operation !== null || refreshIssue !== null}
+          >
+            {operation === "refreshing" ? "Refreshing…" : "Refresh"}
+          </button>
+        </div>
       </header>
 
       {error && (

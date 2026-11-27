@@ -1,10 +1,82 @@
 :root {
+  color-scheme: light;
+  --bg: #f4f6f8;
+  --fg: #18212b;
+  --muted: #657588;
+  --subtle: #7b8794;
+  --timestamp: #536273;
+  --surface: #fff;
+  --surface-hover: #f3f6f8;
+  --border: #e0e6eb;
+  --border-soft: #dce3e9;
+  --border-strong: #c5d0d8;
+  --message-fg: #475665;
+  --shadow: 0 2px 8px rgb(28 44 60 / 3%);
+  --accent: #146b5b;
+  --accent-hover: #0f594c;
+  --accent-fg: #fff;
+  --danger-border: #f2c6c2;
+  --danger-fg: #8b2e28;
+  --danger-bg: #fff4f2;
+  --pill: #eef1f4;
+  --pill-fg: #667382;
+  --online-fg: #176447;
+  --online-bg: #e4f4ec;
+  --offline-fg: #923b32;
+  --offline-bg: #fbe9e6;
+  --neutral-fg: #465b70;
+  --neutral-bg: #edf2f7;
+  --track: #e8eef2;
+  --schedule-on: #d7efe4;
+  --schedule-off: #e7a39c;
+  --schedule-maybe: #f3d7a1;
+  --now: #18212b;
+  --slot-off-fg: #923b32;
+  --slot-off-bg: #fbe9e6;
+  --slot-maybe-fg: #8a5a12;
+  --slot-maybe-bg: #f8ead0;
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  color: #18212b;
-  background: #f4f6f8;
+  color: var(--fg);
+  background: var(--bg);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #10161c;
+  --fg: #e8eef4;
+  --muted: #96a7b8;
+  --subtle: #8496a7;
+  --timestamp: #b0becb;
+  --surface: #1b242e;
+  --surface-hover: #24303c;
+  --border: #31404d;
+  --border-soft: #31404d;
+  --border-strong: #456074;
+  --message-fg: #c9d4de;
+  --shadow: 0 2px 8px rgb(0 0 0 / 28%);
+  --danger-border: #6e3a36;
+  --danger-fg: #f0b4ae;
+  --danger-bg: #2a1816;
+  --pill: #24303b;
+  --pill-fg: #a8b6c4;
+  --online-fg: #8ed7b6;
+  --online-bg: #15352b;
+  --offline-fg: #f0b4ad;
+  --offline-bg: #3a221f;
+  --neutral-fg: #c5d4e0;
+  --neutral-bg: #24313c;
+  --track: #24303a;
+  --schedule-on: #21725a;
+  --schedule-off: #b86a62;
+  --schedule-maybe: #c4923e;
+  --now: #e8eef4;
+  --slot-off-fg: #f0b4ad;
+  --slot-off-bg: #3a221f;
+  --slot-maybe-fg: #f0d4a4;
+  --slot-maybe-bg: #3a2c16;
 }
 
 * {
@@ -15,10 +87,17 @@ body {
   min-width: 320px;
   min-height: 100vh;
   margin: 0;
+  color: var(--fg);
+  background: var(--bg);
 }
 
 button {
   font: inherit;
+}
+
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .page {
@@ -35,9 +114,16 @@ button {
   margin-bottom: 28px;
 }
 
+.topbar-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+}
+
 .eyebrow {
   margin: 0 0 7px;
-  color: #657588;
+  color: var(--muted);
   font-size: 0.72rem;
   font-weight: 700;
   letter-spacing: 0.12em;
@@ -57,22 +143,50 @@ h1 {
 
 .subtitle {
   margin-bottom: 0;
-  color: #657588;
+  color: var(--muted);
+}
+
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--fg);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.theme-toggle:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+}
+
+.theme-toggle svg {
+  width: 18px;
+  height: 18px;
 }
 
 .refresh-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-width: 112px;
-  padding: 11px 18px;
+  height: 42px;
+  padding: 0 18px;
   border: 0;
   border-radius: 8px;
-  color: #fff;
-  background: #146b5b;
+  color: var(--accent-fg);
+  background: var(--accent);
   font-weight: 650;
   cursor: pointer;
 }
 
 .refresh-button:hover:not(:disabled) {
-  background: #0f594c;
+  background: var(--accent-hover);
 }
 
 .refresh-button:disabled {
@@ -83,16 +197,16 @@ h1 {
 .message {
   margin-bottom: 18px;
   padding: 13px 16px;
-  border: 1px solid #dce3e9;
+  border: 1px solid var(--border-soft);
   border-radius: 8px;
-  color: #475665;
-  background: #fff;
+  color: var(--message-fg);
+  background: var(--surface);
 }
 
 .message.error {
-  border-color: #f2c6c2;
-  color: #8b2e28;
-  background: #fff4f2;
+  border-color: var(--danger-border);
+  color: var(--danger-fg);
+  background: var(--danger-bg);
 }
 
 .cards {
@@ -104,10 +218,10 @@ h1 {
 .card {
   min-width: 0;
   padding: 22px;
-  border: 1px solid #e0e6eb;
+  border: 1px solid var(--border);
   border-radius: 11px;
-  background: #fff;
-  box-shadow: 0 2px 8px rgb(28 44 60 / 3%);
+  background: var(--surface);
+  box-shadow: var(--shadow);
 }
 
 .card-heading {
@@ -127,26 +241,26 @@ h1 {
 .status {
   padding: 4px 9px;
   border-radius: 999px;
-  background: #eef1f4;
-  color: #667382;
+  background: var(--pill);
+  color: var(--pill-fg);
   font-size: 0.75rem;
   font-weight: 650;
   text-transform: capitalize;
 }
 
 .status-online {
-  color: #176447;
-  background: #e4f4ec;
+  color: var(--online-fg);
+  background: var(--online-bg);
 }
 
 .status-offline {
-  color: #923b32;
-  background: #fbe9e6;
+  color: var(--offline-fg);
+  background: var(--offline-bg);
 }
 
 .status-neutral {
-  color: #465b70;
-  background: #edf2f7;
+  color: var(--neutral-fg);
+  background: var(--neutral-bg);
 }
 
 .main-value {
@@ -159,13 +273,13 @@ h1 {
 }
 
 .main-value.unavailable {
-  color: #657588;
+  color: var(--muted);
   font-size: 1.45rem;
 }
 
 .caption {
   margin-bottom: 18px;
-  color: #657588;
+  color: var(--muted);
   font-size: 0.9rem;
 }
 
@@ -183,7 +297,7 @@ h1 {
 
 .details dt,
 .detail-note {
-  color: #657588;
+  color: var(--muted);
 }
 
 .details dd {
@@ -204,7 +318,7 @@ h1 {
   flex-wrap: wrap;
   gap: 12px 28px;
   margin-top: 22px;
-  color: #536273;
+  color: var(--timestamp);
   font-size: 0.86rem;
 }
 
@@ -216,14 +330,14 @@ h1 {
 .timestamps span {
   display: block;
   margin-bottom: 4px;
-  color: #7b8794;
+  color: var(--subtle);
   font-size: 0.76rem;
   font-weight: 650;
 }
 
 .freshness-note {
   margin: 12px 0 0;
-  color: #7b8794;
+  color: var(--subtle);
   font-size: 0.8rem;
   line-height: 1.5;
 }
@@ -241,7 +355,7 @@ h1 {
   height: 14px;
   overflow: hidden;
   border-radius: 999px;
-  background: #e8eef2;
+  background: var(--track);
 }
 
 .schedule-segment,
@@ -252,20 +366,20 @@ h1 {
 }
 
 .schedule-on {
-  background: #d7efe4;
+  background: var(--schedule-on);
 }
 
 .schedule-off {
-  background: #e7a39c;
+  background: var(--schedule-off);
 }
 
 .schedule-maybe {
-  background: #f3d7a1;
+  background: var(--schedule-maybe);
 }
 
 .schedule-now {
   width: 2px;
-  background: #18212b;
+  background: var(--now);
   transform: translateX(-1px);
 }
 
@@ -278,7 +392,7 @@ h1 {
 .schedule-hours-end {
   position: absolute;
   top: 8px;
-  color: #7b8794;
+  color: var(--subtle);
   font-size: 0.75rem;
   font-variant-numeric: tabular-nums;
 }
@@ -316,21 +430,40 @@ h1 {
 }
 
 .schedule-slot-label-off {
-  color: #923b32;
-  background: #fbe9e6;
+  color: var(--slot-off-fg);
+  background: var(--slot-off-bg);
 }
 
 .schedule-slot-label-off::before {
-  color: #fbe9e6;
+  color: var(--slot-off-bg);
 }
 
 .schedule-slot-label-maybe {
-  color: #8a5a12;
-  background: #f8ead0;
+  color: var(--slot-maybe-fg);
+  background: var(--slot-maybe-bg);
 }
 
 .schedule-slot-label-maybe::before {
-  color: #f8ead0;
+  color: var(--slot-maybe-bg);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html,
+  body,
+  .card,
+  .message,
+  .status,
+  .theme-toggle,
+  .refresh-button,
+  .schedule-bar,
+  .schedule-segment,
+  .schedule-slot-label {
+    transition:
+      background-color 180ms ease,
+      color 180ms ease,
+      border-color 180ms ease,
+      box-shadow 180ms ease;
+  }
 }
 
 @media (max-width: 600px) {
@@ -344,9 +477,15 @@ h1 {
     gap: 14px;
   }
 
+  .theme-toggle {
+    width: 38px;
+    height: 38px;
+  }
+
   .refresh-button {
     min-width: auto;
-    padding: 10px 13px;
+    height: 38px;
+    padding: 0 13px;
   }
 
   .cards {
