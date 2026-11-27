@@ -241,9 +241,9 @@ export function describeSchedule(
   if (current?.kind === "off") {
     if (gridOnline) {
       return {
-        headline: "Still on",
-        detail: `Scheduled off until ${formatScheduleMinute(current.end)}`,
-        tone: "off",
+        headline: "Power on",
+        detail: `Schedule off until ${formatScheduleMinute(current.end)}`,
+        tone: "on",
         showBar: true,
       };
     }

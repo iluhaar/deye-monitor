@@ -51,6 +51,16 @@ function displayMode(mode: string): string {
   return mode.charAt(0).toUpperCase() + mode.slice(1);
 }
 
+function scheduleBadgeClass(headline: string | undefined): string {
+  if (headline === "Off") {
+    return "offline";
+  }
+  if (headline === "On" || headline === "Power on" || headline === "No outages") {
+    return "online";
+  }
+  return "neutral";
+}
+
 function App() {
   const [telemetry, setTelemetry] = useState<Telemetry | null>(null);
   const [operation, setOperation] = useState<Operation>(() =>
@@ -174,12 +184,11 @@ function App() {
     ? describeSchedule(schedule, telemetry?.grid.status === "online")
     : null;
   const showNow = Boolean(scheduleView?.showBar && scheduleView.tone !== "neutral");
-  const scheduleStatusClass =
-    scheduleView?.tone === "off" ? "offline" : scheduleView?.tone === "on" ? "online" : "neutral";
+  const scheduleStatusClass = scheduleBadgeClass(scheduleView?.headline);
   const scheduleHeadlineClass =
     scheduleView?.headline === "On" ||
     scheduleView?.headline === "Off" ||
-    scheduleView?.headline === "Still on"
+    scheduleView?.headline === "Power on"
       ? ""
       : "unavailable";
 
